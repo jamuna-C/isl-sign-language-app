@@ -19,7 +19,7 @@ import base64
 # ==================== PAGE CONFIGURATION ====================
 st.set_page_config(
     page_title="ISL Sign Language Translator",
-    page_icon="",
+    page_icon="🤟",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -82,9 +82,9 @@ class ISLTranslator:
         self.model = None
         self.labels = None
 
-        # ✅ MediaPipe FIX (NO STRUCTURE CHANGE)
-          self.mp_hands = solutions.hands
-          self.mp_draw = solutions.drawing_utils
+        # MediaPipe initialization - FIXED INDENTATION
+        self.mp_hands = solutions.hands
+        self.mp_draw = solutions.drawing_utils
 
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
@@ -183,7 +183,7 @@ class ISLTranslator:
 
 # ==================== MAIN APPLICATION ====================
 def main():
-    st.markdown('<div class="main-header">ISL Sign Language Translator</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">🤟 ISL Sign Language Translator</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">Real-time Indian Sign Language Recognition</div>', unsafe_allow_html=True)
     st.markdown("---")
 
@@ -225,7 +225,7 @@ def main():
             cap.release()
 
     with col2:
-        st.subheader("Statistics")
+        st.subheader("📊 Statistics")
         st.metric("Total Predictions", app.total_predictions)
 
 # ==================== RUN ====================
