@@ -7,6 +7,7 @@ import streamlit as st
 import cv2
 import numpy as np
 import mediapipe as mp
+from mediapipe import solutions
 from tensorflow import keras
 import wandb
 from datetime import datetime
@@ -82,8 +83,8 @@ class ISLTranslator:
         self.labels = None
 
         # ✅ MediaPipe FIX (NO STRUCTURE CHANGE)
-        self.mp_hands = mp.solutions.hands
-        self.mp_draw = mp.solutions.drawing_utils
+          self.mp_hands = solutions.hands
+          self.mp_draw = solutions.drawing_utils
 
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
