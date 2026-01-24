@@ -2,9 +2,16 @@
 import cv2
 import numpy as np
 import mediapipe as mp
-from tensorflow import keras
 from datetime import datetime
 import os
+
+# Make TensorFlow optional
+try:
+    from tensorflow import keras
+    KERAS_AVAILABLE = True
+except ImportError:
+    KERAS_AVAILABLE = False
+    keras = None
 
 # Page configuration
 st.set_page_config(
@@ -32,6 +39,12 @@ st.markdown("Real-time hand gesture recognition using MediaPipe and Deep Learnin
 with st.sidebar:
     st.header("⚙️ Settings")
     
+    # Show TensorFlow status
+    if KERAS_AVAILABLE:
+        st.success("✅ TensorFlow available")
+    else:
+        st.info("ℹ️ TensorFlow not installed - hand detection only")
+    
     # Detection settings
     st.subheader("Detection Configuration")
     min_detection_confidence = st.slider(
@@ -57,19 +70,20 @@ with st.sidebar:
         except Exception as e:
             st.error(f"❌ Error: {str(e)}")
     
-    # Model loading (optional)
-    st.subheader("Model Configuration")
-    model_path = st.text_input("Model Path (optional)", value="model.h5")
-    
-    if st.button("Load Model"):
-        if os.path.exists(model_path):
-            try:
-                st.session_state.model = keras.models.load_model(model_path)
-                st.success("✅ Model loaded!")
-            except Exception as e:
-                st.error(f"❌ Error loading model: {str(e)}")
-        else:
-            st.warning("⚠️ Model file not found. Detection will work without prediction.")
+    # Model loading (optional - only if TensorFlow available)
+    if KERAS_AVAILABLE:
+        st.subheader("Model Configuration")
+        model_path = st.text_input("Model Path (optional)", value="model.h5")
+        
+        if st.button("Load Model"):
+            if os.path.exists(model_path):
+                try:
+                    st.session_state.model = keras.models.load_model(model_path)
+                    st.success("✅ Model loaded!")
+                except Exception as e:
+                    st.error(f"❌ Error loading model: {str(e)}")
+            else:
+                st.warning("⚠️ Model file not found")
 
 # Sign classes (customize based on your model)
 SIGN_CLASSES = [
@@ -90,6 +104,9 @@ def extract_keypoints(results):
 
 def predict_sign(keypoints, model):
     """Predict sign language gesture"""
+    if not KERAS_AVAILABLE:
+        return "TensorFlow not installed", 0.0
+    
     if model is None:
         return "Model not loaded", 0.0
     
@@ -152,7 +169,7 @@ with tab1:
                         )
                     
                     # Predict if model is available
-                    if st.session_state.model:
+                    if KERAS_AVAILABLE and st.session_state.model:
                         keypoints = extract_keypoints(results)
                         sign, conf = predict_sign(keypoints, st.session_state.model)
                         
@@ -169,7 +186,7 @@ with tab1:
                         result_text.metric("Detected Sign", sign)
                         confidence_bar.progress(float(conf))
                     else:
-                        result_text.info("Hand detected! Load model for prediction.")
+                        result_text.success("✅ Hand detected!")
                 else:
                     result_text.info("No hands detected")
                 
@@ -214,13 +231,13 @@ with tab2:
                 
                 st.image(annotated, use_container_width=True)
                 
-                if st.session_state.model:
+                if KERAS_AVAILABLE and st.session_state.model:
                     keypoints = extract_keypoints(results)
                     sign, conf = predict_sign(keypoints, st.session_state.model)
                     st.success(f"Detected: **{sign}**")
                     st.info(f"Confidence: **{conf:.2%}**")
                 else:
-                    st.info("Hand detected! Load model for prediction.")
+                    st.success("✅ Hand detected!")
             else:
                 st.warning("No hands detected")
     elif uploaded_file:
@@ -232,38 +249,55 @@ with tab3:
     st.markdown("""
     ### 🎯 Indian Sign Language Detection System
     
-    This application uses advanced computer vision and deep learning to detect and recognize 
-    Indian Sign Language gestures in real-time.
+    This application uses advanced computer vision to detect and track hands in real-time.
     
     ### 🔧 Technologies Used
     - **MediaPipe**: Hand landmark detection
-    - **TensorFlow/Keras**: Deep learning for gesture classification
     - **Streamlit**: Interactive web interface
     - **OpenCV**: Image processing
+    - **TensorFlow** (Optional): Deep learning for gesture classification
     
     ### 📖 How to Use
     1. **Initialize Detector**: Click "Initialize Hand Detector" in the sidebar
-    2. **Optional**: Load your trained model for gesture prediction
-    3. **Live Detection**: Use your webcam for real-time detection
-    4. **Image Upload**: Upload images for static analysis
+    2. **Live Detection**: Use your webcam for real-time hand tracking
+    3. **Image Upload**: Upload images for static hand detection
+    4. **Optional**: Add TensorFlow and a trained model for gesture recognition
     
-    ### ⚙️ Features
-    - Real-time hand tracking
-    - Support for multiple hands
+    ### ⚙️ Current Features
+    - Real-time hand tracking with MediaPipe
+    - Support for detecting up to 2 hands simultaneously
     - Adjustable confidence thresholds
-    - Model-based gesture recognition (optional)
-    - Visual feedback with landmarks
+    - Visual feedback with hand landmarks
+    - Works without TensorFlow (hand detection only)
     
     ### 💡 Tips
     - Ensure good lighting for better detection
     - Keep hands clearly visible to the camera
     - Adjust confidence thresholds if needed
+    - Add TensorFlow for gesture prediction capabilities
     
-    ### 📊 Model Information
-    - Supports 26 alphabets (A-Z)
-    - Can be extended for more gestures
-    - Model training required separately
+    ### 🚀 Future Enhancements
+    - Train a model to recognize ISL gestures (A-Z)
+    - Add gesture vocabulary expansion
+    - Include sentence formation
     """)
+    
+    # Show system status
+    st.subheader("System Status")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("MediaPipe", "✅ Installed")
+        st.metric("OpenCV", "✅ Installed")
+    with col2:
+        if KERAS_AVAILABLE:
+            st.metric("TensorFlow", "✅ Installed")
+        else:
+            st.metric("TensorFlow", "❌ Not Installed")
+        
+        if st.session_state.hands:
+            st.metric("Hand Detector", "✅ Initialized")
+        else:
+            st.metric("Hand Detector", "❌ Not Initialized")
 
 # Footer
 st.markdown("---")
@@ -271,7 +305,7 @@ st.markdown(
     """
     <div style='text-align: center'>
         <p>🤟 Indian Sign Language Detection System</p>
-        <p>Powered by MediaPipe, TensorFlow & Streamlit</p>
+        <p>Powered by MediaPipe & Streamlit</p>
     </div>
     """,
     unsafe_allow_html=True
