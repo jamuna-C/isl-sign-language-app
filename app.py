@@ -1,17 +1,8 @@
 ﻿import streamlit as st
 import cv2
 import numpy as np
-import mediapipe as mp
 from datetime import datetime
 import os
-
-# Make TensorFlow optional
-try:
-    from tensorflow import keras
-    KERAS_AVAILABLE = True
-except ImportError:
-    KERAS_AVAILABLE = False
-    keras = None
 
 # Page configuration
 st.set_page_config(
@@ -20,14 +11,29 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize MediaPipe - with error handling
+# Try importing MediaPipe with detailed error handling
+MEDIAPIPE_AVAILABLE = False
+mp = None
+mp_hands = None
+mp_drawing = None
+mp_drawing_styles = None
+
 try:
+    import mediapipe as mp
     mp_hands = mp.solutions.hands
     mp_drawing = mp.solutions.drawing_utils
     mp_drawing_styles = mp.solutions.drawing_styles
+    MEDIAPIPE_AVAILABLE = True
 except Exception as e:
-    st.error(f"Error initializing MediaPipe: {str(e)}")
-    st.stop()
+    st.error(f"MediaPipe Error: {str(e)}")
+
+# Make TensorFlow optional
+try:
+    from tensorflow import keras
+    KERAS_AVAILABLE = True
+except ImportError:
+    KERAS_AVAILABLE = False
+    keras = None
 
 # Initialize session state
 if 'hands' not in st.session_state:
@@ -39,11 +45,24 @@ if 'model' not in st.session_state:
 st.title("🤟 Indian Sign Language Detection System")
 st.markdown("Real-time hand gesture recognition using MediaPipe and Deep Learning")
 
+# Show MediaPipe status at the top
+if not MEDIAPIPE_AVAILABLE:
+    st.error("⚠️ MediaPipe is not available. Please check deployment logs.")
+    st.stop()
+else:
+    st.success("✅ MediaPipe loaded successfully!")
+
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Settings")
     
-    # Show TensorFlow status
+    # Show system status
+    st.subheader("System Status")
+    if MEDIAPIPE_AVAILABLE:
+        st.success("✅ MediaPipe available")
+    else:
+        st.error("❌ MediaPipe not available")
+    
     if KERAS_AVAILABLE:
         st.success("✅ TensorFlow available")
     else:
@@ -63,16 +82,19 @@ with st.sidebar:
     
     # Initialize detector
     if st.button("Initialize Hand Detector"):
-        try:
-            st.session_state.hands = mp_hands.Hands(
-                static_image_mode=False,
-                max_num_hands=2,
-                min_detection_confidence=min_detection_confidence,
-                min_tracking_confidence=min_tracking_confidence
-            )
-            st.success("✅ Hand detector initialized!")
-        except Exception as e:
-            st.error(f"❌ Error: {str(e)}")
+        if not MEDIAPIPE_AVAILABLE:
+            st.error("❌ MediaPipe not available!")
+        else:
+            try:
+                st.session_state.hands = mp_hands.Hands(
+                    static_image_mode=False,
+                    max_num_hands=2,
+                    min_detection_confidence=min_detection_confidence,
+                    min_tracking_confidence=min_tracking_confidence
+                )
+                st.success("✅ Hand detector initialized!")
+            except Exception as e:
+                st.error(f"❌ Error: {str(e)}")
     
     # Model loading (optional - only if TensorFlow available)
     if KERAS_AVAILABLE:
@@ -91,7 +113,8 @@ with st.sidebar:
 
 # Sign classes (customize based on your model)
 SIGN_CLASSES = [
-    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',  # Digits 0-9
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',  # Letters A-Z
     'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
     'U', 'V', 'W', 'X', 'Y', 'Z'
 ]
@@ -132,120 +155,67 @@ tab1, tab2, tab3 = st.tabs(["📹 Live Detection", "📸 Image Upload", "ℹ️ 
 with tab1:
     st.header("Live Camera Detection")
     
+    st.info("📌 Note: Webcam access may not work on deployed apps. Use 'Image Upload' tab instead.")
+    
     if st.session_state.hands is None:
         st.warning("⚠️ Please initialize the hand detector from the sidebar first!")
     else:
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            run = st.checkbox("Start Detection")
-            frame_window = st.empty()
-            
-        with col2:
-            st.subheader("Detection Results")
-            result_text = st.empty()
-            confidence_bar = st.empty()
-        
-        if run:
-            cap = cv2.VideoCapture(0)
-            
-            while run:
-                ret, frame = cap.read()
-                if not ret:
-                    st.error("Failed to access camera")
-                    break
-                
-                # Process frame
-                image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                image.flags.writeable = False
-                results = st.session_state.hands.process(image)
-                image.flags.writeable = True
-                
-                # Draw landmarks
-                if results.multi_hand_landmarks:
-                    for hand_landmarks in results.multi_hand_landmarks:
-                        mp_drawing.draw_landmarks(
-                            image,
-                            hand_landmarks,
-                            mp_hands.HAND_CONNECTIONS,
-                            mp_drawing_styles.get_default_hand_landmarks_style(),
-                            mp_drawing_styles.get_default_hand_connections_style()
-                        )
-                    
-                    # Predict if model is available
-                    if KERAS_AVAILABLE and st.session_state.model:
-                        keypoints = extract_keypoints(results)
-                        sign, conf = predict_sign(keypoints, st.session_state.model)
-                        
-                        cv2.putText(
-                            image,
-                            f"{sign}: {conf:.2f}",
-                            (10, 50),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            1.5,
-                            (0, 255, 0),
-                            3
-                        )
-                        
-                        result_text.metric("Detected Sign", sign)
-                        confidence_bar.progress(float(conf))
-                    else:
-                        result_text.success("✅ Hand detected!")
-                else:
-                    result_text.info("No hands detected")
-                
-                frame_window.image(image, channels="RGB", use_container_width=True)
-            
-            cap.release()
+        st.info("✅ Hand detector ready! (Camera features work best on localhost)")
 
 with tab2:
     st.header("Upload Image for Detection")
     
-    uploaded_file = st.file_uploader(
-        "Choose an image...",
-        type=['jpg', 'jpeg', 'png']
-    )
-    
-    if uploaded_file and st.session_state.hands:
-        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-        image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    if not MEDIAPIPE_AVAILABLE:
+        st.error("MediaPipe is not available. Cannot process images.")
+    elif st.session_state.hands is None:
+        st.warning("⚠️ Please initialize the hand detector from the sidebar first!")
+    else:
+        uploaded_file = st.file_uploader(
+            "Choose an image...",
+            type=['jpg', 'jpeg', 'png']
+        )
         
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("Original Image")
-            st.image(image_rgb, use_container_width=True)
-        
-        with col2:
-            st.subheader("Detection Result")
-            
-            results = st.session_state.hands.process(image_rgb)
-            annotated = image_rgb.copy()
-            
-            if results.multi_hand_landmarks:
-                for hand_landmarks in results.multi_hand_landmarks:
-                    mp_drawing.draw_landmarks(
-                        annotated,
-                        hand_landmarks,
-                        mp_hands.HAND_CONNECTIONS,
-                        mp_drawing_styles.get_default_hand_landmarks_style(),
-                        mp_drawing_styles.get_default_hand_connections_style()
-                    )
+        if uploaded_file:
+            try:
+                file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+                image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
                 
-                st.image(annotated, use_container_width=True)
+                col1, col2 = st.columns(2)
                 
-                if KERAS_AVAILABLE and st.session_state.model:
-                    keypoints = extract_keypoints(results)
-                    sign, conf = predict_sign(keypoints, st.session_state.model)
-                    st.success(f"Detected: **{sign}**")
-                    st.info(f"Confidence: **{conf:.2%}**")
-                else:
-                    st.success("✅ Hand detected!")
-            else:
-                st.warning("No hands detected")
-    elif uploaded_file:
-        st.warning("Please initialize the hand detector first!")
+                with col1:
+                    st.subheader("Original Image")
+                    st.image(image_rgb, use_container_width=True)
+                
+                with col2:
+                    st.subheader("Detection Result")
+                    
+                    results = st.session_state.hands.process(image_rgb)
+                    annotated = image_rgb.copy()
+                    
+                    if results.multi_hand_landmarks:
+                        for hand_landmarks in results.multi_hand_landmarks:
+                            mp_drawing.draw_landmarks(
+                                annotated,
+                                hand_landmarks,
+                                mp_hands.HAND_CONNECTIONS,
+                                mp_drawing_styles.get_default_hand_landmarks_style(),
+                                mp_drawing_styles.get_default_hand_connections_style()
+                            )
+                        
+                        st.image(annotated, use_container_width=True)
+                        
+                        if KERAS_AVAILABLE and st.session_state.model:
+                            keypoints = extract_keypoints(results)
+                            sign, conf = predict_sign(keypoints, st.session_state.model)
+                            st.success(f"Detected: **{sign}**")
+                            st.info(f"Confidence: **{conf:.2%}**")
+                        else:
+                            st.success("✅ Hand detected!")
+                    else:
+                        st.warning("No hands detected in the image")
+            except Exception as e:
+                st.error(f"Error processing image: {str(e)}")
 
 with tab3:
     st.header("About This Application")
@@ -253,7 +223,7 @@ with tab3:
     st.markdown("""
     ### 🎯 Indian Sign Language Detection System
     
-    This application uses advanced computer vision to detect and track hands in real-time.
+    This application uses advanced computer vision to detect and track hands in images.
     
     ### 🔧 Technologies Used
     - **MediaPipe**: Hand landmark detection
@@ -263,20 +233,19 @@ with tab3:
     
     ### 📖 How to Use
     1. **Initialize Detector**: Click "Initialize Hand Detector" in the sidebar
-    2. **Live Detection**: Use your webcam for real-time hand tracking
-    3. **Image Upload**: Upload images for static hand detection
-    4. **Optional**: Add TensorFlow and a trained model for gesture recognition
+    2. **Upload Image**: Go to "Image Upload" tab and upload a hand gesture image
+    3. **View Results**: See the detected hand landmarks and predictions
     
     ### ⚙️ Current Features
-    - Real-time hand tracking with MediaPipe
+    - Hand tracking with MediaPipe
     - Support for detecting up to 2 hands simultaneously
     - Adjustable confidence thresholds
     - Visual feedback with hand landmarks
     - Works without TensorFlow (hand detection only)
     
     ### 💡 Tips
-    - Ensure good lighting for better detection
-    - Keep hands clearly visible to the camera
+    - Upload clear images with good lighting
+    - Keep hands clearly visible in the frame
     - Adjust confidence thresholds if needed
     - Add TensorFlow for gesture prediction capabilities
     
@@ -290,7 +259,10 @@ with tab3:
     st.subheader("System Status")
     col1, col2 = st.columns(2)
     with col1:
-        st.metric("MediaPipe", "✅ Installed")
+        if MEDIAPIPE_AVAILABLE:
+            st.metric("MediaPipe", "✅ Available")
+        else:
+            st.metric("MediaPipe", "❌ Not Available")
         st.metric("OpenCV", "✅ Installed")
     with col2:
         if KERAS_AVAILABLE:
