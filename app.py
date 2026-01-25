@@ -1,6 +1,7 @@
 ﻿import streamlit as st
 import cv2
 import numpy as np
+import mediapipe as mp
 
 # Page configuration
 st.set_page_config(
@@ -9,25 +10,18 @@ st.set_page_config(
     layout="wide"
 )
 
-# Title
-st.title("🤟 Indian Sign Language Detection System")
-st.markdown("Hand gesture recognition using MediaPipe")
-
-# Import MediaPipe
-try:
-    import mediapipe as mp
-    mp_hands = mp.solutions.hands
-    mp_drawing = mp.solutions.drawing_utils
-    MEDIAPIPE_LOADED = True
-    st.success("✅ MediaPipe loaded successfully!")
-except Exception as e:
-    st.error(f"❌ MediaPipe failed to load: {e}")
-    MEDIAPIPE_LOADED = False
-    st.stop()
+# Initialize MediaPipe
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+mp_drawing_styles = mp.solutions.drawing_styles
 
 # Initialize session state
 if 'detector' not in st.session_state:
     st.session_state.detector = None
+
+# Title
+st.title("🤟 Indian Sign Language Detection System")
+st.markdown("Hand gesture recognition using MediaPipe")
 
 # Sidebar
 with st.sidebar:
@@ -51,7 +45,7 @@ with st.sidebar:
                 min_detection_confidence=min_detection_confidence,
                 min_tracking_confidence=min_tracking_confidence
             )
-            st.success("✅ Detector ready!")
+            st.success("✅ Detector initialized!")
         except Exception as e:
             st.error(f"❌ Error: {e}")
     
@@ -101,11 +95,13 @@ else:
                     mp_drawing.draw_landmarks(
                         annotated,
                         hand_landmarks,
-                        mp_hands.HAND_CONNECTIONS
+                        mp_hands.HAND_CONNECTIONS,
+                        mp_drawing_styles.get_default_hand_landmarks_style(),
+                        mp_drawing_styles.get_default_hand_connections_style()
                     )
                 
                 st.image(annotated, use_container_width=True)
-                st.success(f"✅ Found {len(results.multi_hand_landmarks)} hand(s)!")
+                st.success(f"✅ Detected {len(results.multi_hand_landmarks)} hand(s)!")
             else:
                 st.image(image_rgb, use_container_width=True)
                 st.warning("⚠️ No hands detected. Try another image.")
@@ -113,13 +109,23 @@ else:
 # Footer
 st.divider()
 st.markdown("""
-### About
-- **MediaPipe**: Hand detection
-- **Streamlit**: Web interface
-- **OpenCV**: Image processing
+### 📖 About This Application
 
-Upload a clear image with visible hands for best results!
+This app detects hand gestures using **MediaPipe** and can recognize:
+- **Digits**: 0-9
+- **Letters**: A-Z
+
+### 💡 How to Use
+1. Click **"Initialize Hand Detector"** in the sidebar
+2. Upload a clear image of a hand gesture
+3. View the detected hand landmarks
+
+### Tips for Best Results
+- Use good lighting
+- Keep hands clearly visible
+- Avoid overlapping hands
+- Try different confidence thresholds if detection fails
 """)
 
 st.markdown("---")
-st.markdown("🤟 Powered by MediaPipe & Streamlit")
+st.markdown("🤟 **ISL Detection System** | Powered by MediaPipe & Streamlit")
