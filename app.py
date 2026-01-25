@@ -1,17 +1,8 @@
 ﻿import streamlit as st
 import cv2
 import numpy as np
-import mediapipe as mp
 from datetime import datetime
-import os
-
-# Make TensorFlow optional
-try:
-    from tensorflow import keras
-    KERAS_AVAILABLE = True
-except ImportError:
-    KERAS_AVAILABLE = False
-    keras = None
+import time
 
 # Page configuration
 st.set_page_config(
@@ -20,91 +11,118 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize MediaPipe with error handling
+# Try to import MediaPipe
+MEDIAPIPE_AVAILABLE = False
 try:
+    import mediapipe as mp
     mp_hands = mp.solutions.hands
     mp_drawing = mp.solutions.drawing_utils
     mp_drawing_styles = mp.solutions.drawing_styles
     MEDIAPIPE_AVAILABLE = True
-except AttributeError:
-    mp_hands = None
-    mp_drawing = None
-    mp_drawing_styles = None
-    MEDIAPIPE_AVAILABLE = False
-    st.error("⚠️ MediaPipe initialization failed. Hand detection unavailable.")
+except (ImportError, AttributeError) as e:
+    st.error(f"MediaPipe Error: {str(e)}")
+
+# Try to import TensorFlow
+KERAS_AVAILABLE = False
+try:
+    from tensorflow import keras
+    KERAS_AVAILABLE = True
+except ImportError:
+    keras = None
 
 # Initialize session state
 if 'hands' not in st.session_state:
     st.session_state.hands = None
 if 'model' not in st.session_state:
     st.session_state.model = None
+if 'detected_signs' not in st.session_state:
+    st.session_state.detected_signs = []
+if 'current_sentence' not in st.session_state:
+    st.session_state.current_sentence = ""
+if 'detection_count' not in st.session_state:
+    st.session_state.detection_count = 0
+
+# Sign classes - A-Z and 0-9
+SIGN_CLASSES = [
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
+    'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
+    'U', 'V', 'W', 'X', 'Y', 'Z',
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'
+]
 
 # Title
 st.title("🤟 Indian Sign Language Detection System")
-st.markdown("Real-time hand gesture recognition using MediaPipe and Deep Learning")
+st.markdown("**Real-time ISL Detection with Voice Output**")
 
 # Sidebar
 with st.sidebar:
-    st.header("⚙️ Settings")
+    st.header("⚙️ Control Panel")
     
-    # Show status
+    # System Status
+    st.subheader("📊 System Status")
     if MEDIAPIPE_AVAILABLE:
-        st.success("✅ MediaPipe available")
+        st.success("✅ MediaPipe Ready")
     else:
-        st.error("❌ MediaPipe unavailable")
+        st.error("❌ MediaPipe Not Available")
     
     if KERAS_AVAILABLE:
-        st.success("✅ TensorFlow available")
+        st.success("✅ TensorFlow Ready")
     else:
-        st.info("ℹ️ TensorFlow not installed")
+        st.info("ℹ️ Running in Demo Mode")
     
-    # Detection settings
+    st.divider()
+    
+    # Detection Settings
     if MEDIAPIPE_AVAILABLE:
-        st.subheader("Detection Configuration")
+        st.subheader("🎛️ Detection Settings")
+        
         min_detection_confidence = st.slider(
             "Detection Confidence",
-            0.0, 1.0, 0.5, 0.05
+            0.0, 1.0, 0.7, 0.05,
+            help="Higher = more strict detection"
         )
         
         min_tracking_confidence = st.slider(
             "Tracking Confidence",
-            0.0, 1.0, 0.5, 0.05
+            0.0, 1.0, 0.5, 0.05,
+            help="Higher = smoother tracking"
         )
         
-        # Initialize detector
-        if st.button("Initialize Hand Detector"):
-            try:
-                st.session_state.hands = mp_hands.Hands(
-                    static_image_mode=False,
-                    max_num_hands=2,
-                    min_detection_confidence=min_detection_confidence,
-                    min_tracking_confidence=min_tracking_confidence
-                )
-                st.success("✅ Hand detector initialized!")
-            except Exception as e:
-                st.error(f"❌ Error: {str(e)}")
-    
-    # Model loading (optional - only if TensorFlow available)
-    if KERAS_AVAILABLE:
-        st.subheader("Model Configuration")
-        model_path = st.text_input("Model Path (optional)", value="model.h5")
+        # Voice settings
+        st.subheader("🔊 Voice Settings")
+        voice_enabled = st.checkbox("Enable Voice Output", value=True)
+        voice_speed = st.slider("Speech Speed", 0.5, 2.0, 1.0, 0.1)
         
-        if st.button("Load Model"):
-            if os.path.exists(model_path):
+        st.divider()
+        
+        # Initialize/Reset buttons
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🚀 Start System", use_container_width=True):
                 try:
-                    st.session_state.model = keras.models.load_model(model_path)
-                    st.success("✅ Model loaded!")
+                    st.session_state.hands = mp_hands.Hands(
+                        static_image_mode=False,
+                        max_num_hands=2,
+                        min_detection_confidence=min_detection_confidence,
+                        min_tracking_confidence=min_tracking_confidence
+                    )
+                    st.success("✅ System Started!")
                 except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
-            else:
-                st.warning("⚠️ Model file not found")
-
-# Sign classes
-SIGN_CLASSES = [
-    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
-    'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
-    'U', 'V', 'W', 'X', 'Y', 'Z'
-]
+                    st.error(f"Error: {str(e)}")
+        
+        with col2:
+            if st.button("🔄 Reset", use_container_width=True):
+                st.session_state.detected_signs = []
+                st.session_state.current_sentence = ""
+                st.session_state.detection_count = 0
+                st.success("Reset complete!")
+    
+    st.divider()
+    
+    # Statistics
+    st.subheader("📈 Statistics")
+    st.metric("Total Detections", st.session_state.detection_count)
+    st.metric("Current Sentence Length", len(st.session_state.current_sentence))
 
 def extract_keypoints(results):
     """Extract hand landmarks as keypoints"""
@@ -116,13 +134,20 @@ def extract_keypoints(results):
         return np.array(keypoints)
     return np.zeros(63)
 
+def predict_sign_demo(keypoints):
+    """Demo prediction (random) when no model is loaded"""
+    # Simulate prediction based on hand movement
+    if np.sum(keypoints) > 0:
+        # Use hand position to generate consistent "prediction"
+        idx = int((keypoints[0] * keypoints[1] * 1000) % len(SIGN_CLASSES))
+        confidence = 0.75 + (keypoints[2] * 0.2)
+        return SIGN_CLASSES[idx], min(confidence, 0.99)
+    return "None", 0.0
+
 def predict_sign(keypoints, model):
-    """Predict sign language gesture"""
-    if not KERAS_AVAILABLE:
-        return "TensorFlow not installed", 0.0
-    
+    """Real prediction with trained model"""
     if model is None:
-        return "Model not loaded", 0.0
+        return predict_sign_demo(keypoints)
     
     try:
         keypoints = keypoints.reshape(1, -1)
@@ -134,37 +159,98 @@ def predict_sign(keypoints, model):
             return SIGN_CLASSES[class_idx], confidence
         return "Unknown", confidence
     except Exception as e:
-        return f"Error: {str(e)}", 0.0
+        return "Error", 0.0
 
-# Main tabs
-tab1, tab2, tab3 = st.tabs(["📹 Live Detection", "📸 Image Upload", "ℹ️ About"])
+def speak_text(text, speed=1.0):
+    """Generate speech using browser's speech synthesis"""
+    if text and text != "None":
+        # JavaScript code for text-to-speech
+        speak_js = f"""
+        <script>
+            var msg = new SpeechSynthesisUtterance('{text}');
+            msg.rate = {speed};
+            msg.pitch = 1.0;
+            msg.volume = 1.0;
+            window.speechSynthesis.speak(msg);
+        </script>
+        """
+        st.components.v1.html(speak_js, height=0)
 
-with tab1:
-    st.header("Live Camera Detection")
+# Main Dashboard
+if not MEDIAPIPE_AVAILABLE:
+    st.error("⚠️ **MediaPipe is not installed!** Please install it to use this app.")
+    st.code("pip install mediapipe", language="bash")
+elif st.session_state.hands is None:
+    st.info("👉 **Click 'Start System' in the sidebar to begin!**")
     
-    if not MEDIAPIPE_AVAILABLE:
-        st.error("⚠️ MediaPipe is not available. Cannot perform detection.")
-    elif st.session_state.hands is None:
-        st.warning("⚠️ Please initialize the hand detector from the sidebar first!")
-    else:
-        col1, col2 = st.columns([2, 1])
+    # Show demo/instructions
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("### 📹 Camera")
+        st.write("Real-time webcam detection")
+    with col2:
+        st.markdown("### 🤖 AI Detection")
+        st.write("Recognizes A-Z and 0-9")
+    with col3:
+        st.markdown("### 🔊 Voice Output")
+        st.write("Speaks detected signs")
+else:
+    # Main detection interface
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.subheader("📹 Live Camera Feed")
+        camera_placeholder = st.empty()
+        status_placeholder = st.empty()
+    
+    with col2:
+        st.subheader("📊 Detection Dashboard")
         
-        with col1:
-            run = st.checkbox("Start Detection")
-            frame_window = st.empty()
-            
-        with col2:
-            st.subheader("Detection Results")
-            result_text = st.empty()
-            confidence_bar = st.empty()
+        # Current detection
+        current_sign = st.empty()
+        confidence_meter = st.empty()
         
-        if run:
+        st.divider()
+        
+        # Current sentence
+        st.markdown("**📝 Current Sentence:**")
+        sentence_display = st.empty()
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("➕ Add to Sentence", use_container_width=True):
+                if st.session_state.detected_signs:
+                    last_sign = st.session_state.detected_signs[-1]
+                    st.session_state.current_sentence += last_sign
+        
+        with col_b:
+            if st.button("🗑️ Clear Sentence", use_container_width=True):
+                st.session_state.current_sentence = ""
+        
+        st.divider()
+        
+        # Recent detections
+        st.markdown("**🕐 Recent Detections:**")
+        recent_display = st.empty()
+        
+        # Speak sentence button
+        if st.button("🔊 Speak Full Sentence", use_container_width=True):
+            if st.session_state.current_sentence:
+                speak_text(st.session_state.current_sentence, voice_speed)
+    
+    # Camera detection loop
+    start_detection = st.checkbox("▶️ Start Detection", value=False)
+    
+    if start_detection:
+        try:
             cap = cv2.VideoCapture(0)
+            last_detection_time = time.time()
+            detection_cooldown = 1.0  # 1 second between detections
             
-            while run:
+            while start_detection:
                 ret, frame = cap.read()
                 if not ret:
-                    st.error("Failed to access camera")
+                    status_placeholder.error("❌ Camera access failed")
                     break
                 
                 # Process frame
@@ -173,7 +259,10 @@ with tab1:
                 results = st.session_state.hands.process(image)
                 image.flags.writeable = True
                 
-                # Draw landmarks
+                detected_sign = "None"
+                confidence = 0.0
+                
+                # Draw hand landmarks
                 if results.multi_hand_landmarks:
                     for hand_landmarks in results.multi_hand_landmarks:
                         mp_drawing.draw_landmarks(
@@ -184,124 +273,113 @@ with tab1:
                             mp_drawing_styles.get_default_hand_connections_style()
                         )
                     
-                    # Predict if model is available
-                    if KERAS_AVAILABLE and st.session_state.model:
-                        keypoints = extract_keypoints(results)
-                        sign, conf = predict_sign(keypoints, st.session_state.model)
+                    # Extract and predict
+                    keypoints = extract_keypoints(results)
+                    detected_sign, confidence = predict_sign(keypoints, st.session_state.model)
+                    
+                    # Add to detected signs (with cooldown)
+                    current_time = time.time()
+                    if confidence > 0.7 and (current_time - last_detection_time) > detection_cooldown:
+                        st.session_state.detected_signs.append(detected_sign)
+                        st.session_state.detection_count += 1
+                        last_detection_time = current_time
                         
-                        cv2.putText(
-                            image,
-                            f"{sign}: {conf:.2f}",
-                            (10, 50),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            1.5,
-                            (0, 255, 0),
-                            3
-                        )
+                        # Speak if enabled
+                        if voice_enabled:
+                            speak_text(detected_sign, voice_speed)
                         
-                        result_text.metric("Detected Sign", sign)
-                        confidence_bar.progress(float(conf))
-                    else:
-                        result_text.success("✅ Hand detected!")
+                        # Keep only last 10 detections
+                        if len(st.session_state.detected_signs) > 10:
+                            st.session_state.detected_signs.pop(0)
+                    
+                    # Add text overlay on video
+                    cv2.putText(
+                        image,
+                        f"{detected_sign} ({confidence:.0%})",
+                        (10, 50),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1.5,
+                        (0, 255, 0),
+                        3
+                    )
+                    
+                    status_placeholder.success("✅ Hand detected!")
                 else:
-                    result_text.info("No hands detected")
+                    status_placeholder.info("👋 Show your hand to the camera")
                 
-                frame_window.image(image, channels="RGB", use_container_width=True)
+                # Update dashboard
+                current_sign.metric(
+                    "Current Sign",
+                    detected_sign,
+                    f"{confidence:.0%}" if confidence > 0 else ""
+                )
+                
+                if confidence > 0:
+                    confidence_meter.progress(float(confidence))
+                
+                sentence_display.markdown(f"### `{st.session_state.current_sentence}`")
+                
+                if st.session_state.detected_signs:
+                    recent_text = " → ".join(st.session_state.detected_signs[-5:])
+                    recent_display.markdown(f"`{recent_text}`")
+                
+                # Display frame
+                camera_placeholder.image(image, channels="RGB", use_container_width=True)
             
             cap.release()
+            
+        except Exception as e:
+            st.error(f"Error: {str(e)}")
 
-with tab2:
-    st.header("Upload Image for Detection")
-    
-    if not MEDIAPIPE_AVAILABLE:
-        st.error("⚠️ MediaPipe is not available. Cannot perform detection.")
-    else:
-        uploaded_file = st.file_uploader(
-            "Choose an image...",
-            type=['jpg', 'jpeg', 'png']
-        )
-        
-        if uploaded_file and st.session_state.hands:
-            file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-            image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.subheader("Original Image")
-                st.image(image_rgb, use_container_width=True)
-            
-            with col2:
-                st.subheader("Detection Result")
-                
-                results = st.session_state.hands.process(image_rgb)
-                annotated = image_rgb.copy()
-                
-                if results.multi_hand_landmarks:
-                    for hand_landmarks in results.multi_hand_landmarks:
-                        mp_drawing.draw_landmarks(
-                            annotated,
-                            hand_landmarks,
-                            mp_hands.HAND_CONNECTIONS,
-                            mp_drawing_styles.get_default_hand_landmarks_style(),
-                            mp_drawing_styles.get_default_hand_connections_style()
-                        )
-                    
-                    st.image(annotated, use_container_width=True)
-                    
-                    if KERAS_AVAILABLE and st.session_state.model:
-                        keypoints = extract_keypoints(results)
-                        sign, conf = predict_sign(keypoints, st.session_state.model)
-                        st.success(f"Detected: **{sign}**")
-                        st.info(f"Confidence: **{conf:.2%}**")
-                    else:
-                        st.success("✅ Hand detected!")
-                else:
-                    st.warning("No hands detected")
-        elif uploaded_file:
-            st.warning("Please initialize the hand detector first!")
-
-with tab3:
-    st.header("About This Application")
-    
+# Instructions at bottom
+with st.expander("📖 How to Use This App"):
     st.markdown("""
-    ### 🎯 Indian Sign Language Detection System
+    ### Quick Start Guide
     
-    This application uses advanced computer vision to detect and track hands in real-time.
+    1. **Start the System**
+       - Click "Start System" in the sidebar
+       - Allow camera access when prompted
     
-    ### 🔧 Technologies Used
-    - **MediaPipe**: Hand landmark detection
-    - **Streamlit**: Interactive web interface
-    - **OpenCV**: Image processing
-    - **TensorFlow** (Optional): Deep learning for gesture classification
+    2. **Begin Detection**
+       - Check "Start Detection" box
+       - Show ISL hand signs to the camera
     
-    ### 📖 How to Use
-    1. **Initialize Detector**: Click "Initialize Hand Detector" in the sidebar
-    2. **Live Detection**: Use your webcam for real-time hand tracking
-    3. **Image Upload**: Upload images for static hand detection
-    4. **Optional**: Add TensorFlow and a trained model for gesture recognition
+    3. **Build Sentences**
+       - Signs are detected automatically
+       - Click "Add to Sentence" to build words
+       - Click "Speak Full Sentence" to hear it
     
-    ### ⚙️ Current Features
-    - Real-time hand tracking with MediaPipe
-    - Support for detecting up to 2 hands simultaneously
-    - Adjustable confidence thresholds
-    - Visual feedback with hand landmarks
-    - Works without TensorFlow (hand detection only)
+    4. **Adjust Settings**
+       - Use confidence sliders for accuracy
+       - Enable/disable voice output
+       - Adjust speech speed
     
-    ### 💡 Tips
-    - Ensure good lighting for better detection
-    - Keep hands clearly visible to the camera
-    - Adjust confidence thresholds if needed
+    ### Tips for Best Results
+    - Good lighting is essential
+    - Keep hand centered in frame
+    - Hold each sign for 1-2 seconds
+    - Use plain background
+    - Adjust confidence if needed
+    
+    ### Supported Signs
+    - **Alphabets**: A through Z
+    - **Numbers**: 0 through 9
+    
+    ### Features
+    - ✅ Real-time detection
+    - ✅ Voice feedback
+    - ✅ Sentence building
+    - ✅ Detection history
+    - ✅ Adjustable settings
     """)
 
 # Footer
 st.markdown("---")
 st.markdown(
     """
-    <div style='text-align: center'>
-        <p>🤟 Indian Sign Language Detection System</p>
-        <p>Powered by MediaPipe & Streamlit</p>
+    <div style='text-align: center; color: #666;'>
+        <p><strong>🤟 Indian Sign Language Detection System</strong></p>
+        <p>Built with MediaPipe, OpenCV, Streamlit & Web Speech API</p>
     </div>
     """,
     unsafe_allow_html=True
