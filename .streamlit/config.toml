@@ -1,9 +1,6 @@
-[theme]
-primaryColor = "#00A67E"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F0F2F6"
-
-[server]
-headless = true
-port = 8501
-enableCORS = false
+[server] 
+headless = true 
+port = 8501 
+ 
+[browser] 
+gatherUsageStats = false 
