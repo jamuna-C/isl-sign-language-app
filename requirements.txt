@@ -1,4 +1,7 @@
 streamlit
-opencv-python-headless
-mediapipe
-numpy
+opencv-python-headless>=4.10.0
+mediapipe==0.10.14
+numpy>=2.1.0,<2.4.0
+pillow
+tensorflow>=2.16.0
+gtts
