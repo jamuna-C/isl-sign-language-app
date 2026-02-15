@@ -1,12 +1,10 @@
 import streamlit as st
 import numpy as np
 from PIL import Image, ImageDraw
-import io
 from gtts import gTTS
 import base64
 import tempfile
 import os
-import sys
 
 # ============================================================================
 # PAGE CONFIGURATION
@@ -18,34 +16,33 @@ st.set_page_config(
 )
 
 # ============================================================================
-# IMPORT DEPENDENCIES WITH ERROR HANDLING
+# IMPORT MEDIAPIPE AND TENSORFLOW
 # ============================================================================
-
-# MediaPipe Import
-MEDIAPIPE_OK = False
-mediapipe_error = None
-try:
+@st.cache_resource
+def import_dependencies():
+    """Import heavy dependencies with caching"""
     try:
-        from mediapipe.python.solutions import hands as mp_hands
-        from mediapipe.python.solutions import drawing_utils as mp_drawing
-        from mediapipe.python.solutions import drawing_styles as mp_drawing_styles
-    except:
         import mediapipe as mp
         mp_hands = mp.solutions.hands
         mp_drawing = mp.solutions.drawing_utils
         mp_drawing_styles = mp.solutions.drawing_styles
-    MEDIAPIPE_OK = True
-except Exception as e:
-    mediapipe_error = str(e)
+    except Exception as e:
+        st.error(f"MediaPipe import error: {e}")
+        return None, None, None, False
+    
+    try:
+        from tensorflow import keras
+    except Exception as e:
+        st.error(f"TensorFlow import error: {e}")
+        return None, None, None, False
+    
+    return mp_hands, mp_drawing, mp_drawing_styles, keras, True
 
-# TensorFlow Import
-TENSORFLOW_OK = False
-tensorflow_error = None
-try:
-    from tensorflow import keras
-    TENSORFLOW_OK = True
-except Exception as e:
-    tensorflow_error = str(e)
+result = import_dependencies()
+if len(result) == 5:
+    mp_hands, mp_drawing, mp_drawing_styles, keras, DEPS_OK = result
+else:
+    DEPS_OK = False
 
 # ============================================================================
 # CUSTOM CSS
@@ -134,15 +131,6 @@ st.markdown("""
         0%, 100% { box-shadow: 0 0 10px #4caf50; }
         50% { box-shadow: 0 0 20px #4caf50, 0 0 30px #4caf50; }
     }
-    
-    .code-box {
-        background-color: #2d2d2d;
-        color: #00ff00;
-        padding: 15px;
-        border-radius: 5px;
-        font-family: monospace;
-        margin: 10px 0;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -151,40 +139,34 @@ st.markdown("""
 # ============================================================================
 @st.cache_resource
 def load_model():
+    """Load the trained model and labels"""
     try:
         model = keras.models.load_model('isl_model.h5')
         labels = np.load('isl_labels.npy', allow_pickle=True)
         return model, labels, True
-    except:
+    except FileNotFoundError:
+        return None, None, False
+    except Exception as e:
+        st.error(f"Model loading error: {e}")
         return None, None, False
 
-model, labels, MODEL_OK = load_model()
-
-# ============================================================================
-# CHECK SYSTEM STATUS
-# ============================================================================
-def check_system_status():
-    issues = []
-    
-    if not MEDIAPIPE_OK:
-        issues.append(("MediaPipe", mediapipe_error))
-    if not TENSORFLOW_OK:
-        issues.append(("TensorFlow", tensorflow_error))
-    if not MODEL_OK:
-        issues.append(("Model Files", "isl_model.h5 or isl_labels.npy not found"))
-    
-    return issues
+if DEPS_OK:
+    model, labels, MODEL_OK = load_model()
+else:
+    MODEL_OK = False
 
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
 def extract_landmarks(hand_landmarks):
+    """Extract hand landmarks coordinates"""
     landmarks = []
     for landmark in hand_landmarks.landmark:
         landmarks.extend([landmark.x, landmark.y, landmark.z])
     return np.array(landmarks).reshape(1, -1)
 
 def predict_gesture(landmarks, model, labels, threshold=0.70):
+    """Predict ISL gesture from landmarks"""
     try:
         predictions = model.predict(landmarks, verbose=0)
         confidence = np.max(predictions)
@@ -193,10 +175,11 @@ def predict_gesture(landmarks, model, labels, threshold=0.70):
         if confidence >= threshold:
             return labels[class_idx], confidence
         return None, confidence
-    except:
+    except Exception as e:
         return None, 0.0
 
 def text_to_speech(text):
+    """Convert text to speech"""
     try:
         tts = gTTS(text=text, lang='en', slow=False)
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as fp:
@@ -206,40 +189,51 @@ def text_to_speech(text):
             os.unlink(fp.name)
             audio_base64 = base64.b64encode(audio_bytes).decode()
             return f'<audio autoplay><source src="data:audio/mp3;base64,{audio_base64}" type="audio/mp3"></audio>'
-    except:
+    except Exception as e:
         return None
 
 def draw_landmarks_on_image(image, hand_landmarks):
+    """Draw hand landmarks using PIL"""
     img_copy = image.copy()
     draw = ImageDraw.Draw(img_copy)
     width, height = image.size
     
+    # Draw landmark points
     for landmark in hand_landmarks.landmark:
         x = int(landmark.x * width)
         y = int(landmark.y * height)
         radius = 5
-        draw.ellipse([x-radius, y-radius, x+radius, y+radius], fill='red', outline='white', width=2)
+        draw.ellipse([x-radius, y-radius, x+radius, y+radius], 
+                    fill='#FF5252', outline='white', width=2)
     
+    # Draw connections
     connections = mp_hands.HAND_CONNECTIONS
     for connection in connections:
         start_idx, end_idx = connection[0], connection[1]
         start_landmark = hand_landmarks.landmark[start_idx]
         end_landmark = hand_landmarks.landmark[end_idx]
+        
         start_x = int(start_landmark.x * width)
         start_y = int(start_landmark.y * height)
         end_x = int(end_landmark.x * width)
         end_y = int(end_landmark.y * height)
-        draw.line([(start_x, start_y), (end_x, end_y)], fill='green', width=3)
+        
+        draw.line([(start_x, start_y), (end_x, end_y)], 
+                 fill='#4CAF50', width=3)
     
     return img_copy
 
 def process_image(image):
+    """Process image and detect hand gesture"""
     try:
+        # Convert to RGB
         if image.mode != 'RGB':
             image = image.convert('RGB')
         
+        # Convert to numpy array
         img_array = np.array(image)
         
+        # Process with MediaPipe
         with mp_hands.Hands(
             static_image_mode=True,
             max_num_hands=1,
@@ -249,47 +243,48 @@ def process_image(image):
             
             if results.multi_hand_landmarks:
                 for hand_landmarks in results.multi_hand_landmarks:
+                    # Draw landmarks
                     img_with_landmarks = draw_landmarks_on_image(image, hand_landmarks)
+                    
+                    # Extract and predict
                     landmarks = extract_landmarks(hand_landmarks)
                     gesture, confidence = predict_gesture(landmarks, model, labels)
+                    
                     return img_with_landmarks, gesture, confidence, True
             
             return image, None, 0.0, False
+            
     except Exception as e:
+        st.error(f"Processing error: {e}")
         return image, None, 0.0, False
 
 # ============================================================================
 # MAIN UI
 # ============================================================================
-st.markdown('<h1 style="text-align: center; color: #667eea;">🤟 ISL Sign Language Detector</h1>', unsafe_allow_html=True)
-st.markdown('<p style="text-align: center; color: #888; font-size: 1.2rem;">AI-Powered Hand Gesture Recognition with Voice Output 🔊</p>', unsafe_allow_html=True)
+st.markdown('<h1 style="text-align: center; color: #667eea;">🤟 ISL Sign Language Detector</h1>', 
+           unsafe_allow_html=True)
+st.markdown('<p style="text-align: center; color: #888; font-size: 1.2rem;">AI-Powered Hand Gesture Recognition with Voice Output 🔊</p>', 
+           unsafe_allow_html=True)
 
-# Check system status
-issues = check_system_status()
+# Check dependencies
+if not DEPS_OK:
+    st.error("### ⚠️ Dependency Error")
+    st.info("**Please check your `requirements.txt` file contains:**")
+    st.code("""streamlit
+mediapipe
+tensorflow
+gtts
+pillow
+numpy
+protobuf==3.20.3""")
+    st.stop()
 
-if issues:
-    st.error("### ⚠️ Setup Required")
-    
-    for issue_name, issue_detail in issues:
-        st.warning(f"**{issue_name}**: {issue_detail}")
-    
-    st.info("### 🔧 Quick Fix Guide:")
-    
-    if "libGL" in str(mediapipe_error):
-        st.markdown("**1. Install system libraries (Ubuntu/Debian):**")
-        st.code("sudo apt-get update && sudo apt-get install -y libgl1-mesa-glx libglib2.0-0", language="bash")
-    
-    st.markdown("**2. Install Python packages:**")
-    st.code("pip install --upgrade streamlit mediapipe tensorflow gtts pillow numpy", language="bash")
-    
-    if not MODEL_OK:
-        st.markdown("**3. Add model files to the same directory as app.py:**")
-        st.markdown("- `isl_model.h5`")
-        st.markdown("- `isl_labels.npy`")
-    
-    st.markdown("**4. Restart the app:**")
-    st.code("streamlit run app.py", language="bash")
-    
+# Check model
+if not MODEL_OK:
+    st.error("### ⚠️ Model Files Missing")
+    st.info("**Please ensure these files are in your repository:**")
+    st.markdown("- `isl_model.h5` (your trained model)")
+    st.markdown("- `isl_labels.npy` (your labels file)")
     st.stop()
 
 # ============================================================================
@@ -329,6 +324,7 @@ enable_voice = st.sidebar.checkbox("🔊 Enable Voice", value=True)
 # ============================================================================
 tab1, tab2 = st.tabs(["📸 Camera", "📁 Upload"])
 
+# Camera Tab
 with tab1:
     st.markdown("""
     <div class="webcam-container">
@@ -363,15 +359,20 @@ with tab1:
                 """, unsafe_allow_html=True)
                 
                 if enable_voice:
-                    st.markdown(f'<div class="voice-indicator">🔊 Speaking: {gesture}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="voice-indicator">🔊 Speaking: {gesture}</div>', 
+                              unsafe_allow_html=True)
                     audio_html = text_to_speech(str(gesture))
                     if audio_html:
                         st.markdown(audio_html, unsafe_allow_html=True)
+                        
             elif hand_detected:
                 st.warning(f"👋 Low confidence ({confidence:.1%})")
+                st.info("Try better lighting or clearer gesture")
             else:
                 st.error("❌ No hand detected")
+                st.info("Make sure your hand is clearly visible")
 
+# Upload Tab
 with tab2:
     st.markdown("""
     <div class="webcam-container">
@@ -406,15 +407,20 @@ with tab2:
                 """, unsafe_allow_html=True)
                 
                 if enable_voice:
-                    st.markdown(f'<div class="voice-indicator">🔊 Speaking: {gesture}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="voice-indicator">🔊 Speaking: {gesture}</div>', 
+                              unsafe_allow_html=True)
                     audio_html = text_to_speech(str(gesture))
                     if audio_html:
                         st.markdown(audio_html, unsafe_allow_html=True)
+                        
             elif hand_detected:
                 st.warning(f"👋 Low confidence ({confidence:.1%})")
+                st.info("Try a different image")
             else:
                 st.error("❌ No hand detected")
+                st.info("Upload an image with a visible hand")
 
+# Footer
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #888; padding: 20px;">
