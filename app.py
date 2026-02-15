@@ -18,7 +18,7 @@ st.set_page_config(
 st.title("🤟 ISL Sign Language Detector")
 st.markdown("AI-Powered Hand Gesture Recognition with Voice Output 🔊")
 
-# Initialize MediaPipe
+# Initialize MediaPipe - CORRECTED
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 
@@ -36,8 +36,8 @@ def load_model():
 model, labels = load_model()
 
 if model is None:
-    st.error("⚠️ Dependency Error")
-    st.info("Please check that all packages are installed correctly.")
+    st.error("⚠️ Model Loading Error")
+    st.info("Please check that model files exist.")
     st.stop()
 
 # Camera input
@@ -53,14 +53,14 @@ if enable_camera:
         image = Image.open(io.BytesIO(bytes_data))
         img_array = np.array(image)
         
-        # Process with MediaPipe
+        # Process with MediaPipe - CORRECTED
         with mp_hands.Hands(
             static_image_mode=True,
             max_num_hands=1,
             min_detection_confidence=0.5
         ) as hands:
             
-            # Convert BGR to RGB
+            # Convert to RGB
             img_rgb = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
             results = hands.process(img_rgb)
             
@@ -80,7 +80,7 @@ if enable_camera:
                     
                     # Make prediction
                     landmarks = np.array(landmarks).reshape(1, -1)
-                    prediction = model.predict(landmarks)
+                    prediction = model.predict(landmarks, verbose=0)
                     predicted_class = np.argmax(prediction)
                     confidence = np.max(prediction)
                     
@@ -97,7 +97,7 @@ if enable_camera:
             else:
                 st.warning("No hand detected. Please try again.")
 else:
-    st.info("Enable camera from the sidebar to start detection.")
+    st.info("👈 Enable camera from the sidebar to start detection.")
 
 # Footer
 st.markdown("---")
