@@ -6,31 +6,7 @@ from gtts import gTTS
 import base64
 import tempfile
 import os
-
-# Import MediaPipe with correct structure
-try:
-    from mediapipe.python.solutions import hands as mp_hands
-    from mediapipe.python.solutions import drawing_utils as mp_drawing
-    from mediapipe.python.solutions import drawing_styles as mp_drawing_styles
-    MEDIAPIPE_OK = True
-except ImportError:
-    try:
-        # Alternative import method
-        import mediapipe as mp
-        mp_hands = mp.solutions.hands
-        mp_drawing = mp.solutions.drawing_utils
-        mp_drawing_styles = mp.solutions.drawing_styles
-        MEDIAPIPE_OK = True
-    except Exception as e:
-        st.error(f"MediaPipe Error: {e}. Install with: pip install mediapipe")
-        MEDIAPIPE_OK = False
-
-# Import TensorFlow/Keras
-try:
-    from tensorflow import keras
-except ImportError:
-    st.error("TensorFlow not installed. Install with: pip install tensorflow")
-    st.stop()
+import sys
 
 # ============================================================================
 # PAGE CONFIGURATION
@@ -40,6 +16,36 @@ st.set_page_config(
     page_icon="🤟",
     layout="wide"
 )
+
+# ============================================================================
+# IMPORT DEPENDENCIES WITH ERROR HANDLING
+# ============================================================================
+
+# MediaPipe Import
+MEDIAPIPE_OK = False
+mediapipe_error = None
+try:
+    try:
+        from mediapipe.python.solutions import hands as mp_hands
+        from mediapipe.python.solutions import drawing_utils as mp_drawing
+        from mediapipe.python.solutions import drawing_styles as mp_drawing_styles
+    except:
+        import mediapipe as mp
+        mp_hands = mp.solutions.hands
+        mp_drawing = mp.solutions.drawing_utils
+        mp_drawing_styles = mp.solutions.drawing_styles
+    MEDIAPIPE_OK = True
+except Exception as e:
+    mediapipe_error = str(e)
+
+# TensorFlow Import
+TENSORFLOW_OK = False
+tensorflow_error = None
+try:
+    from tensorflow import keras
+    TENSORFLOW_OK = True
+except Exception as e:
+    tensorflow_error = str(e)
 
 # ============================================================================
 # CUSTOM CSS
@@ -128,6 +134,15 @@ st.markdown("""
         0%, 100% { box-shadow: 0 0 10px #4caf50; }
         50% { box-shadow: 0 0 20px #4caf50, 0 0 30px #4caf50; }
     }
+    
+    .code-box {
+        background-color: #2d2d2d;
+        color: #00ff00;
+        padding: 15px;
+        border-radius: 5px;
+        font-family: monospace;
+        margin: 10px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -140,28 +155,36 @@ def load_model():
         model = keras.models.load_model('isl_model.h5')
         labels = np.load('isl_labels.npy', allow_pickle=True)
         return model, labels, True
-    except FileNotFoundError as e:
-        st.error(f"Model files not found: {e}")
-        st.info("Please ensure 'isl_model.h5' and 'isl_labels.npy' are in the same directory as this script.")
-        return None, None, False
-    except Exception as e:
-        st.error(f"Model loading error: {e}")
+    except:
         return None, None, False
 
 model, labels, MODEL_OK = load_model()
 
 # ============================================================================
+# CHECK SYSTEM STATUS
+# ============================================================================
+def check_system_status():
+    issues = []
+    
+    if not MEDIAPIPE_OK:
+        issues.append(("MediaPipe", mediapipe_error))
+    if not TENSORFLOW_OK:
+        issues.append(("TensorFlow", tensorflow_error))
+    if not MODEL_OK:
+        issues.append(("Model Files", "isl_model.h5 or isl_labels.npy not found"))
+    
+    return issues
+
+# ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
 def extract_landmarks(hand_landmarks):
-    """Extract hand landmarks for AI"""
     landmarks = []
     for landmark in hand_landmarks.landmark:
         landmarks.extend([landmark.x, landmark.y, landmark.z])
     return np.array(landmarks).reshape(1, -1)
 
 def predict_gesture(landmarks, model, labels, threshold=0.70):
-    """Predict ISL gesture"""
     try:
         predictions = model.predict(landmarks, verbose=0)
         confidence = np.max(predictions)
@@ -170,87 +193,53 @@ def predict_gesture(landmarks, model, labels, threshold=0.70):
         if confidence >= threshold:
             return labels[class_idx], confidence
         return None, confidence
-    except Exception as e:
-        st.error(f"Prediction error: {e}")
+    except:
         return None, 0.0
 
 def text_to_speech(text):
-    """Convert text to speech and return audio HTML"""
     try:
-        # Create speech - just say the letter/number directly
         tts = gTTS(text=text, lang='en', slow=False)
-        
-        # Save to temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as fp:
             tts.save(fp.name)
-            
-            # Read the audio file
             with open(fp.name, 'rb') as audio_file:
                 audio_bytes = audio_file.read()
-            
-            # Clean up temp file
             os.unlink(fp.name)
-            
-            # Encode to base64
             audio_base64 = base64.b64encode(audio_bytes).decode()
-            
-            # Create HTML audio player with autoplay
-            audio_html = f"""
-                <audio autoplay>
-                    <source src="data:audio/mp3;base64,{audio_base64}" type="audio/mp3">
-                </audio>
-            """
-            return audio_html
-    except Exception as e:
-        st.error(f"Speech error: {e}")
+            return f'<audio autoplay><source src="data:audio/mp3;base64,{audio_base64}" type="audio/mp3"></audio>'
+    except:
         return None
 
 def draw_landmarks_on_image(image, hand_landmarks):
-    """Draw hand landmarks on image using PIL (no OpenCV needed)"""
-    # Create a copy to draw on
     img_copy = image.copy()
     draw = ImageDraw.Draw(img_copy)
-    
-    # Get image dimensions
     width, height = image.size
     
-    # Draw landmarks as circles
     for landmark in hand_landmarks.landmark:
         x = int(landmark.x * width)
         y = int(landmark.y * height)
-        # Draw a circle for each landmark
         radius = 5
-        draw.ellipse([x-radius, y-radius, x+radius, y+radius], fill='red', outline='white')
+        draw.ellipse([x-radius, y-radius, x+radius, y+radius], fill='red', outline='white', width=2)
     
-    # Draw connections
     connections = mp_hands.HAND_CONNECTIONS
     for connection in connections:
-        start_idx = connection[0]
-        end_idx = connection[1]
-        
+        start_idx, end_idx = connection[0], connection[1]
         start_landmark = hand_landmarks.landmark[start_idx]
         end_landmark = hand_landmarks.landmark[end_idx]
-        
         start_x = int(start_landmark.x * width)
         start_y = int(start_landmark.y * height)
         end_x = int(end_landmark.x * width)
         end_y = int(end_landmark.y * height)
-        
-        draw.line([(start_x, start_y), (end_x, end_y)], fill='green', width=2)
+        draw.line([(start_x, start_y), (end_x, end_y)], fill='green', width=3)
     
     return img_copy
 
 def process_image(image):
-    """Process uploaded image or webcam capture - NO OpenCV"""
     try:
-        # Convert PIL image to RGB if needed
         if image.mode != 'RGB':
             image = image.convert('RGB')
         
-        # Convert to numpy array for MediaPipe
         img_array = np.array(image)
         
-        # Process with MediaPipe
         with mp_hands.Hands(
             static_image_mode=True,
             max_num_hands=1,
@@ -260,21 +249,48 @@ def process_image(image):
             
             if results.multi_hand_landmarks:
                 for hand_landmarks in results.multi_hand_landmarks:
-                    # Draw landmarks using PIL (not OpenCV)
                     img_with_landmarks = draw_landmarks_on_image(image, hand_landmarks)
-                    
-                    # Predict
                     landmarks = extract_landmarks(hand_landmarks)
                     gesture, confidence = predict_gesture(landmarks, model, labels)
-                    
                     return img_with_landmarks, gesture, confidence, True
             
             return image, None, 0.0, False
     except Exception as e:
-        st.error(f"Image processing error: {e}")
-        import traceback
-        st.error(traceback.format_exc())
         return image, None, 0.0, False
+
+# ============================================================================
+# MAIN UI
+# ============================================================================
+st.markdown('<h1 style="text-align: center; color: #667eea;">🤟 ISL Sign Language Detector</h1>', unsafe_allow_html=True)
+st.markdown('<p style="text-align: center; color: #888; font-size: 1.2rem;">AI-Powered Hand Gesture Recognition with Voice Output 🔊</p>', unsafe_allow_html=True)
+
+# Check system status
+issues = check_system_status()
+
+if issues:
+    st.error("### ⚠️ Setup Required")
+    
+    for issue_name, issue_detail in issues:
+        st.warning(f"**{issue_name}**: {issue_detail}")
+    
+    st.info("### 🔧 Quick Fix Guide:")
+    
+    if "libGL" in str(mediapipe_error):
+        st.markdown("**1. Install system libraries (Ubuntu/Debian):**")
+        st.code("sudo apt-get update && sudo apt-get install -y libgl1-mesa-glx libglib2.0-0", language="bash")
+    
+    st.markdown("**2. Install Python packages:**")
+    st.code("pip install --upgrade streamlit mediapipe tensorflow gtts pillow numpy", language="bash")
+    
+    if not MODEL_OK:
+        st.markdown("**3. Add model files to the same directory as app.py:**")
+        st.markdown("- `isl_model.h5`")
+        st.markdown("- `isl_labels.npy`")
+    
+    st.markdown("**4. Restart the app:**")
+    st.code("streamlit run app.py", language="bash")
+    
+    st.stop()
 
 # ============================================================================
 # SIDEBAR
@@ -285,91 +301,56 @@ st.sidebar.markdown("""
     <div class="instruction-item">1. Use camera or upload image</div>
     <div class="instruction-item">2. Ensure hand is clearly visible</div>
     <div class="instruction-item">3. Make ISL gesture</div>
-    <div class="instruction-item">4. AI will detect & speak the sign! 🔊</div>
+    <div class="instruction-item">4. AI will detect & speak! 🔊</div>
 </div>
 """, unsafe_allow_html=True)
 
 st.sidebar.markdown("""
 <div class="instructions-box">
-    <div class="instructions-title">📚 Supported Signs:</div>
-    <div class="instruction-item">• <strong>Numbers:</strong> 1-9</div>
-    <div class="instruction-item">• <strong>Alphabets:</strong> A-Z</div>
+    <div class="instructions-title">📚 Supported Signs</div>
+    <div class="instruction-item">• Numbers: 1-9</div>
+    <div class="instruction-item">• Alphabets: A-Z</div>
 </div>
 """, unsafe_allow_html=True)
 
 st.sidebar.markdown("""
 <div class="instructions-box">
-    <div class="instructions-title">🤖 AI Model Info</div>
-    <div class="instruction-item">• Model: Deep Neural Network</div>
-    <div class="instruction-item">• Signs: 35 ISL gestures</div>
-    <div class="instruction-item">• Accuracy: ~95%</div>
-    <div class="instruction-item">• Framework: TensorFlow/Keras</div>
-    <div class="instruction-item">• Voice: Text-to-Speech 🔊</div>
+    <div class="instructions-title">🤖 AI Info</div>
+    <div class="instruction-item">• 35 ISL gestures</div>
+    <div class="instruction-item">• ~95% accuracy</div>
+    <div class="instruction-item">• Real-time voice 🔊</div>
 </div>
 """, unsafe_allow_html=True)
 
-# Voice output toggle
-enable_voice = st.sidebar.checkbox("🔊 Enable Voice Output", value=True, 
-                                   help="Speak the detected sign")
+enable_voice = st.sidebar.checkbox("🔊 Enable Voice", value=True)
 
 # ============================================================================
-# MAIN UI
+# TABS
 # ============================================================================
-st.markdown('<h1 style="text-align: center; color: #667eea;">🤟 ISL Sign Language Detector</h1>', unsafe_allow_html=True)
-st.markdown('<p style="text-align: center; color: #888; font-size: 1.2rem;">AI-Powered Hand Gesture Recognition with Voice Output 🔊</p>', unsafe_allow_html=True)
+tab1, tab2 = st.tabs(["📸 Camera", "📁 Upload"])
 
-# Check if model and MediaPipe loaded
-if not MODEL_OK or not MEDIAPIPE_OK:
-    st.error("⚠️ System not ready. Please ensure model files are present and all dependencies are installed.")
-    
-    # Show installation instructions
-    st.markdown("""
-    ### Required Installations:
-    ```bash
-    pip install streamlit mediapipe tensorflow gtts pillow numpy
-    ```
-    
-    ### Required Files:
-    - `isl_model.h5` (your trained model)
-    - `isl_labels.npy` (your labels file)
-    """)
-    st.stop()
-
-# Create tabs for different input methods
-tab1, tab2 = st.tabs(["📸 Camera Capture", "📁 Upload Image"])
-
-# ============================================================================
-# CAMERA CAPTURE TAB
-# ============================================================================
 with tab1:
     st.markdown("""
     <div class="webcam-container">
-        <div class="webcam-title">📹 Live Webcam Detection</div>
-        <div class="webcam-subtitle">
-            Use the camera widget below to capture your hand gesture
-        </div>
+        <div class="webcam-title">📹 Live Camera</div>
+        <div class="webcam-subtitle">Capture your hand gesture</div>
     </div>
     """, unsafe_allow_html=True)
     
-    # Camera input widget
-    camera_photo = st.camera_input("📸 Take a photo of your hand gesture")
+    camera_photo = st.camera_input("📸 Take a photo")
     
-    if camera_photo is not None:
-        # Open image
+    if camera_photo:
         image = Image.open(camera_photo)
-        
-        # Process image
         processed_img, gesture, confidence, hand_detected = process_image(image)
         
-        # Display results
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("📷 Captured Image")
+            st.subheader("📷 Image")
             st.image(processed_img, use_container_width=True)
         
         with col2:
-            st.subheader("🎯 Detection Result")
+            st.subheader("🎯 Result")
             
             if hand_detected and gesture:
                 st.markdown(f"""
@@ -381,57 +362,38 @@ with tab1:
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Voice output - just speak the letter/number
                 if enable_voice:
-                    st.markdown(f'<div class="voice-indicator">🔊 Speaking: {gesture}</div>', 
-                              unsafe_allow_html=True)
-                    # Just speak the gesture directly (like "H" or "9")
+                    st.markdown(f'<div class="voice-indicator">🔊 Speaking: {gesture}</div>', unsafe_allow_html=True)
                     audio_html = text_to_speech(str(gesture))
                     if audio_html:
                         st.markdown(audio_html, unsafe_allow_html=True)
-                
             elif hand_detected:
-                st.warning(f"👋 Hand detected but low confidence ({confidence:.1%})")
-                st.info("Try:\n- Better lighting\n- Clearer gesture\n- Different angle")
+                st.warning(f"👋 Low confidence ({confidence:.1%})")
             else:
-                st.error("❌ No hand detected in image")
-                st.info("Make sure your hand is clearly visible")
+                st.error("❌ No hand detected")
 
-# ============================================================================
-# UPLOAD IMAGE TAB
-# ============================================================================
 with tab2:
     st.markdown("""
     <div class="webcam-container">
-        <div class="webcam-title">📁 Upload Image</div>
-        <div class="webcam-subtitle">
-            Upload an image of ISL hand gesture
-        </div>
+        <div class="webcam-title">📁 Upload</div>
+        <div class="webcam-subtitle">Upload hand gesture image</div>
     </div>
     """, unsafe_allow_html=True)
     
-    uploaded_file = st.file_uploader(
-        "Choose an image...", 
-        type=['jpg', 'jpeg', 'png'],
-        help="Upload a clear image of an ISL hand gesture"
-    )
+    uploaded_file = st.file_uploader("Choose image", type=['jpg', 'jpeg', 'png'])
     
-    if uploaded_file is not None:
-        # Open image
+    if uploaded_file:
         image = Image.open(uploaded_file)
-        
-        # Process image
         processed_img, gesture, confidence, hand_detected = process_image(image)
         
-        # Display results
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("📷 Uploaded Image")
+            st.subheader("📷 Image")
             st.image(processed_img, use_container_width=True)
         
         with col2:
-            st.subheader("🎯 Detection Result")
+            st.subheader("🎯 Result")
             
             if hand_detected and gesture:
                 st.markdown(f"""
@@ -443,34 +405,20 @@ with tab2:
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Voice output - just speak the letter/number
                 if enable_voice:
-                    st.markdown(f'<div class="voice-indicator">🔊 Speaking: {gesture}</div>', 
-                              unsafe_allow_html=True)
-                    # Just speak the gesture directly (like "H" or "9")
+                    st.markdown(f'<div class="voice-indicator">🔊 Speaking: {gesture}</div>', unsafe_allow_html=True)
                     audio_html = text_to_speech(str(gesture))
                     if audio_html:
                         st.markdown(audio_html, unsafe_allow_html=True)
-                
             elif hand_detected:
-                st.warning(f"👋 Hand detected but low confidence ({confidence:.1%})")
-                st.info("Try a different image with:\n- Better lighting\n- Clearer gesture\n- Different angle")
+                st.warning(f"👋 Low confidence ({confidence:.1%})")
             else:
-                st.error("❌ No hand detected in image")
-                st.info("Upload an image with a clearly visible hand gesture")
+                st.error("❌ No hand detected")
 
-# ============================================================================
-# FOOTER
-# ============================================================================
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #888; padding: 20px;">
-    <p style="font-size: 1.1rem;">
-        <strong>🤖 Powered by Artificial Intelligence + Voice Output 🔊</strong>
-    </p>
-    <p>Built with ❤️ using <strong>Streamlit</strong> • <strong>MediaPipe</strong> • <strong>TensorFlow</strong> • <strong>gTTS</strong></p>
-    <p style="font-size: 0.9rem; color: #999;">
-        Deep Learning Model trained on 35 Indian Sign Language gestures with Text-to-Speech
-    </p>
+    <p><strong>🤖 AI + Voice Recognition 🔊</strong></p>
+    <p>Streamlit • MediaPipe • TensorFlow • gTTS</p>
 </div>
 """, unsafe_allow_html=True)
