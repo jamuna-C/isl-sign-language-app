@@ -6,15 +6,18 @@ from gtts import gTTS
 from PIL import Image
 import io
 
-# Import MediaPipe properly
+# Import MediaPipe components directly
 try:
-    import mediapipe as mp
-    from mediapipe.python.solutions import hands as mp_hands_module
-    from mediapipe.python.solutions import drawing_utils as mp_drawing_module
+    from mediapipe.python.solutions.hands import Hands, HAND_CONNECTIONS
+    from mediapipe.python.solutions.drawing_utils import draw_landmarks
+    MEDIAPIPE_AVAILABLE = True
 except ImportError:
-    import mediapipe as mp
-    mp_hands_module = mp.solutions.hands
-    mp_drawing_module = mp.solutions.drawing_utils
+    try:
+        from mediapipe.tasks.python import vision
+        MEDIAPIPE_AVAILABLE = True
+    except ImportError:
+        MEDIAPIPE_AVAILABLE = False
+        st.error("MediaPipe is not properly installed")
 
 # Page config
 st.set_page_config(
@@ -72,7 +75,7 @@ if camera_input is not None:
         img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
         
         # Process with MediaPipe
-        with mp_hands_module.Hands(
+        with Hands(
             static_image_mode=True,
             max_num_hands=1,
             min_detection_confidence=0.5
@@ -118,10 +121,10 @@ if camera_input is not None:
                     # Draw landmarks on image
                     annotated_image = img_array.copy()
                     for hand_landmarks in results.multi_hand_landmarks:
-                        mp_drawing_module.draw_landmarks(
+                        draw_landmarks(
                             annotated_image,
                             hand_landmarks,
-                            mp_hands_module.HAND_CONNECTIONS
+                            HAND_CONNECTIONS
                         )
                     
                     # Display annotated image
