@@ -1,6 +1,7 @@
-streamlit>=1.28.0
-mediapipe>=0.10.0
-tensorflow>=2.13.0
-gtts>=2.4.0
-Pillow>=10.0.0
-numpy>=1.24.0
+streamlit
+mediapipe
+tensorflow
+gtts
+pillow
+numpy
+protobuf==3.20.3
