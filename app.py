@@ -1,7 +1,7 @@
 import streamlit as st
 import cv2
 import numpy as np
-import mediapipe as mp
+from mediapipe import solutions as mp_solutions
 from tensorflow import keras
 from PIL import Image
 import io
@@ -115,9 +115,9 @@ st.markdown("""
 @st.cache_resource
 def init_mediapipe():
     try:
-        mp_hands = mp.solutions.hands
-        mp_drawing = mp.solutions.drawing_utils
-        mp_drawing_styles = mp.solutions.drawing_styles
+        mp_hands = mp_solutions.hands
+        mp_drawing = mp_solutions.drawing_utils
+        mp_drawing_styles = mp_solutions.drawing_styles
         return mp_hands, mp_drawing, mp_drawing_styles, True
     except Exception as e:
         st.error(f"MediaPipe Error: {e}")
@@ -166,7 +166,7 @@ def predict_gesture(landmarks, model, labels, threshold=0.70):
 def text_to_speech(text):
     """Convert text to speech and return audio HTML"""
     try:
-        # Create speech
+        # Create speech - just say the letter/number directly
         tts = gTTS(text=text, lang='en', slow=False)
         
         # Save to temporary file
@@ -330,12 +330,12 @@ with tab1:
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Voice output
+                # Voice output - just speak the letter/number
                 if enable_voice:
-                    st.markdown('<div class="voice-indicator">🔊 Speaking the detected sign...</div>', 
+                    st.markdown('<div class="voice-indicator">🔊 Speaking: {}</div>'.format(gesture), 
                               unsafe_allow_html=True)
-                    speech_text = f"The detected sign is {gesture}"
-                    audio_html = text_to_speech(speech_text)
+                    # Just speak the gesture directly (like "H" or "9")
+                    audio_html = text_to_speech(str(gesture))
                     if audio_html:
                         st.markdown(audio_html, unsafe_allow_html=True)
                 
@@ -394,12 +394,12 @@ with tab2:
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Voice output
+                # Voice output - just speak the letter/number
                 if enable_voice:
-                    st.markdown('<div class="voice-indicator">🔊 Speaking the detected sign...</div>', 
+                    st.markdown('<div class="voice-indicator">🔊 Speaking: {}</div>'.format(gesture), 
                               unsafe_allow_html=True)
-                    speech_text = f"The detected sign is {gesture}"
-                    audio_html = text_to_speech(speech_text)
+                    # Just speak the gesture directly (like "H" or "9")
+                    audio_html = text_to_speech(str(gesture))
                     if audio_html:
                         st.markdown(audio_html, unsafe_allow_html=True)
                 
