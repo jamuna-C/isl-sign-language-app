@@ -1,18 +1,11 @@
 import streamlit as st
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 import io
 from gtts import gTTS
 import base64
 import tempfile
 import os
-
-# Import cv2 with error handling
-try:
-    import cv2
-except ImportError:
-    st.error("OpenCV (cv2) not installed. Install with: pip install opencv-python-headless")
-    st.stop()
 
 # Import MediaPipe with correct structure
 try:
@@ -212,18 +205,50 @@ def text_to_speech(text):
         st.error(f"Speech error: {e}")
         return None
 
-def process_image(image):
-    """Process uploaded image or webcam capture"""
-    try:
-        # Convert PIL to numpy array
-        img_array = np.array(image)
+def draw_landmarks_on_image(image, hand_landmarks):
+    """Draw hand landmarks on image using PIL (no OpenCV needed)"""
+    # Create a copy to draw on
+    img_copy = image.copy()
+    draw = ImageDraw.Draw(img_copy)
+    
+    # Get image dimensions
+    width, height = image.size
+    
+    # Draw landmarks as circles
+    for landmark in hand_landmarks.landmark:
+        x = int(landmark.x * width)
+        y = int(landmark.y * height)
+        # Draw a circle for each landmark
+        radius = 5
+        draw.ellipse([x-radius, y-radius, x+radius, y+radius], fill='red', outline='white')
+    
+    # Draw connections
+    connections = mp_hands.HAND_CONNECTIONS
+    for connection in connections:
+        start_idx = connection[0]
+        end_idx = connection[1]
         
-        # Convert RGB to BGR for OpenCV (if needed)
-        if len(img_array.shape) == 3 and img_array.shape[2] == 3:
-            img_rgb = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-            img_rgb = cv2.cvtColor(img_rgb, cv2.COLOR_BGR2RGB)
-        else:
-            img_rgb = img_array
+        start_landmark = hand_landmarks.landmark[start_idx]
+        end_landmark = hand_landmarks.landmark[end_idx]
+        
+        start_x = int(start_landmark.x * width)
+        start_y = int(start_landmark.y * height)
+        end_x = int(end_landmark.x * width)
+        end_y = int(end_landmark.y * height)
+        
+        draw.line([(start_x, start_y), (end_x, end_y)], fill='green', width=2)
+    
+    return img_copy
+
+def process_image(image):
+    """Process uploaded image or webcam capture - NO OpenCV"""
+    try:
+        # Convert PIL image to RGB if needed
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        
+        # Convert to numpy array for MediaPipe
+        img_array = np.array(image)
         
         # Process with MediaPipe
         with mp_hands.Hands(
@@ -231,29 +256,25 @@ def process_image(image):
             max_num_hands=1,
             min_detection_confidence=0.7
         ) as hands:
-            results = hands.process(img_rgb)
+            results = hands.process(img_array)
             
             if results.multi_hand_landmarks:
                 for hand_landmarks in results.multi_hand_landmarks:
-                    # Draw landmarks
-                    mp_drawing.draw_landmarks(
-                        img_rgb,
-                        hand_landmarks,
-                        mp_hands.HAND_CONNECTIONS,
-                        mp_drawing_styles.get_default_hand_landmarks_style(),
-                        mp_drawing_styles.get_default_hand_connections_style()
-                    )
+                    # Draw landmarks using PIL (not OpenCV)
+                    img_with_landmarks = draw_landmarks_on_image(image, hand_landmarks)
                     
                     # Predict
                     landmarks = extract_landmarks(hand_landmarks)
                     gesture, confidence = predict_gesture(landmarks, model, labels)
                     
-                    return img_rgb, gesture, confidence, True
+                    return img_with_landmarks, gesture, confidence, True
             
-            return img_rgb, None, 0.0, False
+            return image, None, 0.0, False
     except Exception as e:
         st.error(f"Image processing error: {e}")
-        return img_array, None, 0.0, False
+        import traceback
+        st.error(traceback.format_exc())
+        return image, None, 0.0, False
 
 # ============================================================================
 # SIDEBAR
@@ -305,13 +326,7 @@ if not MODEL_OK or not MEDIAPIPE_OK:
     st.markdown("""
     ### Required Installations:
     ```bash
-    pip install streamlit
-    pip install opencv-python-headless
-    pip install mediapipe
-    pip install tensorflow
-    pip install gtts
-    pip install pillow
-    pip install numpy
+    pip install streamlit mediapipe tensorflow gtts pillow numpy
     ```
     
     ### Required Files:
