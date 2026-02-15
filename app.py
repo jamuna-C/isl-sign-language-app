@@ -7,6 +7,10 @@ from gtts import gTTS
 from PIL import Image
 import io
 
+# Initialize MediaPipe AFTER importing it
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+
 # Page config
 st.set_page_config(
     page_title="ISL Sign Language Recognition",
@@ -17,10 +21,6 @@ st.set_page_config(
 # Title
 st.title("🤟 ISL Sign Language Recognition")
 st.markdown("AI-Powered Hand Gesture Recognition with Voice Output 🔊")
-
-# Initialize MediaPipe
-mp_hands = mp.solutions.hands
-mp_drawing = mp.solutions.drawing_utils
 
 # Load model and labels
 @st.cache_resource
