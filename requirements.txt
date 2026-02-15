@@ -1,8 +1,7 @@
-gradio==4.44.1
+streamlit==1.31.0
+mediapipe==0.10.32
+tensorflow==2.18.0
 opencv-python-headless==4.9.0.80
-mediapipe==0.10.14
 numpy==1.26.4
 pillow==10.4.0
-tensorflow==2.18.0
-scikit-learn==1.5.2
-absl-py>=1.0.0
+gtts==2.5.0
