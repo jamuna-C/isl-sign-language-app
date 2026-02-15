@@ -1,32 +1,28 @@
-﻿"""
-ISL Sign Language Detection System
-Professional real-time hand gesture recognition with voice output
-"""
-
 import streamlit as st
 import cv2
 import numpy as np
 import mediapipe as mp
 from tensorflow import keras
-from gtts import gTTS
-import tempfile
-import os
-import base64
-from datetime import datetime
+import time
 from collections import deque
 
-# ==================== PAGE CONFIGURATION ====================
+# ============================================================================
+# PAGE CONFIGURATION
+# ============================================================================
 st.set_page_config(
-    page_title="ISL Sign Language Detector",
+    page_title="ISL Sign Language Detector - AI Powered",
     page_icon="🤟",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ==================== CUSTOM CSS ====================
+# ============================================================================
+# CUSTOM CSS STYLING
+# ============================================================================
 st.markdown("""
 <style>
-    .main-header {
+    /* Main styling */
+    .main-title {
         font-size: 3rem;
         font-weight: bold;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -35,467 +31,617 @@ st.markdown("""
         text-align: center;
         margin-bottom: 0.5rem;
     }
+    
     .subtitle {
         text-align: center;
         color: #666;
         font-size: 1.2rem;
         margin-bottom: 2rem;
     }
-    .prediction-card {
+    
+    /* Webcam container */
+    .webcam-container {
+        background: linear-gradient(135deg, #1a237e 0%, #0d47a1 100%);
+        padding: 30px;
+        border-radius: 20px;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    }
+    
+    .webcam-title {
+        color: white;
+        font-size: 2rem;
+        font-weight: bold;
+        text-align: center;
+        margin-bottom: 15px;
+    }
+    
+    .webcam-instruction {
+        color: #64b5f6;
+        font-size: 1.1rem;
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    
+    /* Result display */
+    .result-container {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 3rem;
+        padding: 50px;
         border-radius: 20px;
         text-align: center;
-        color: white;
-        font-size: 4rem;
-        font-weight: bold;
-        margin: 2rem 0;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-        animation: pulse 2s infinite;
+        box-shadow: 0 15px 50px rgba(0,0,0,0.4);
+        margin: 20px 0;
+        animation: pulse 2s ease-in-out infinite;
     }
+    
     @keyframes pulse {
         0%, 100% { transform: scale(1); }
-        50% { transform: scale(1.05); }
+        50% { transform: scale(1.02); }
     }
-    .confidence-bar {
-        background: #f0f0f0;
-        border-radius: 10px;
-        padding: 1rem;
-        margin: 1rem 0;
+    
+    .result-text {
+        color: white;
+        font-size: 4.5rem;
+        font-weight: 900;
+        text-shadow: 3px 3px 6px rgba(0,0,0,0.5);
+        letter-spacing: 2px;
     }
-    .stats-card {
-        background: white;
-        padding: 1.5rem;
+    
+    .confidence-text {
+        color: white;
+        font-size: 1.5rem;
+        margin-top: 15px;
+        opacity: 0.9;
+    }
+    
+    /* Info boxes */
+    .info-box {
+        background: linear-gradient(135deg, #263238 0%, #37474f 100%);
+        color: white;
+        padding: 25px;
         border-radius: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        margin: 1rem 0;
+        margin: 15px 0;
+        box-shadow: 0 5px 20px rgba(0,0,0,0.2);
     }
-    .status-running {
-        background: #10b981;
-        color: white;
-        padding: 0.5rem 1rem;
-        border-radius: 20px;
+    
+    .info-title {
+        color: #64b5f6;
+        font-size: 1.5rem;
         font-weight: bold;
+        margin-bottom: 15px;
     }
-    .status-stopped {
-        background: #ef4444;
+    
+    /* Status indicators */
+    .status-stable {
+        background-color: #4caf50;
         color: white;
-        padding: 0.5rem 1rem;
-        border-radius: 20px;
+        padding: 10px 20px;
+        border-radius: 25px;
+        display: inline-block;
+        font-weight: bold;
+        animation: glow 1.5s ease-in-out infinite;
+    }
+    
+    @keyframes glow {
+        0%, 100% { box-shadow: 0 0 10px #4caf50; }
+        50% { box-shadow: 0 0 20px #4caf50, 0 0 30px #4caf50; }
+    }
+    
+    .status-detecting {
+        background-color: #ff9800;
+        color: white;
+        padding: 10px 20px;
+        border-radius: 25px;
+        display: inline-block;
         font-weight: bold;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ==================== INITIALIZE MEDIAPIPE ====================
+# ============================================================================
+# INITIALIZE MEDIAPIPE
+# ============================================================================
 try:
     mp_hands = mp.solutions.hands
     mp_drawing = mp.solutions.drawing_utils
     mp_drawing_styles = mp.solutions.drawing_styles
-except AttributeError:
-    st.error("❌ MediaPipe initialization failed")
+    MEDIAPIPE_AVAILABLE = True
+    st.success("✅ MediaPipe Hands module loaded successfully")
+except Exception as e:
+    MEDIAPIPE_AVAILABLE = False
+    st.error(f"❌ MediaPipe initialization failed: {e}")
     st.stop()
 
-# ==================== SESSION STATE ====================
-if 'model' not in st.session_state:
-    st.session_state.model = None
-if 'hands' not in st.session_state:
-    st.session_state.hands = None
-if 'predictions' not in st.session_state:
-    st.session_state.predictions = []
-if 'word_buffer' not in st.session_state:
-    st.session_state.word_buffer = deque(maxlen=10)
-if 'current_word' not in st.session_state:
-    st.session_state.current_word = ""
-if 'is_running' not in st.session_state:
-    st.session_state.is_running = False
-
-# ==================== SIGN LANGUAGE CLASSES ====================
-SIGN_CLASSES = [
-    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
-    'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
-    'U', 'V', 'W', 'X', 'Y', 'Z',
-    '1', '2', '3', '4', '5', '6', '7', '8', '9'
-]
-
-# ==================== HELPER FUNCTIONS ====================
-def extract_keypoints(results):
-    """Extract hand landmarks as keypoints"""
-    if results.multi_hand_landmarks:
-        for hand_landmarks in results.multi_hand_landmarks:
-            keypoints = []
-            for landmark in hand_landmarks.landmark:
-                keypoints.extend([landmark.x, landmark.y, landmark.z])
-            return np.array(keypoints)
-    return np.zeros(63)
-
-def preprocess_keypoints(keypoints, target_shape=(63,)):
-    """Preprocess keypoints for model input"""
-    if len(keypoints) < target_shape[0]:
-        keypoints = np.pad(keypoints, (0, target_shape[0] - len(keypoints)))
-    elif len(keypoints) > target_shape[0]:
-        keypoints = keypoints[:target_shape[0]]
-    return keypoints.reshape(1, -1)
-
-def predict_sign(keypoints, model):
-    """Predict sign language gesture"""
-    if model is None:
-        return None, 0.0
-    
+# ============================================================================
+# LOAD AI MODEL AND LABELS
+# ============================================================================
+@st.cache_resource
+def load_ai_model_and_labels():
+    """Load the trained Keras model and ISL sign labels"""
     try:
-        processed = preprocess_keypoints(keypoints)
-        prediction = model.predict(processed, verbose=0)
-        class_idx = np.argmax(prediction[0])
-        confidence = float(prediction[0][class_idx])
+        # Load the AI model
+        model = keras.models.load_model('isl_model.h5')
+        st.success("✅ AI Model (isl_model.h5) loaded successfully - 35 ISL signs ready")
         
-        if class_idx < len(SIGN_CLASSES):
-            return SIGN_CLASSES[class_idx], confidence
-        return "Unknown", confidence
+        # Load labels
+        labels = np.load('isl_labels.npy', allow_pickle=True)
+        st.success(f"✅ Label database loaded - {len(labels)} ISL signs available")
+        
+        return model, labels
+    except FileNotFoundError as e:
+        st.error(f"❌ Model files not found: {e}")
+        st.info("📁 Please ensure 'isl_model.h5' and 'isl_labels.npy' are in the same folder")
+        return None, None
     except Exception as e:
-        return None, 0.0
+        st.error(f"❌ Error loading model: {e}")
+        return None, None
 
-def text_to_speech(text):
-    """Convert text to speech and play audio"""
-    try:
-        tts = gTTS(text=text, lang='en', slow=False)
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as fp:
-            tts.save(fp.name)
-            audio_file = fp.name
-        
-        with open(audio_file, 'rb') as f:
-            audio_bytes = f.read()
-        
-        audio_base64 = base64.b64encode(audio_bytes).decode()
-        audio_html = f"""
-        <audio autoplay>
-            <source src="data:audio/mp3;base64,{audio_base64}" type="audio/mp3">
-        </audio>
-        """
-        st.markdown(audio_html, unsafe_allow_html=True)
-        
-        os.unlink(audio_file)
-        return True
-    except Exception as e:
-        return False
+# Load model at startup
+model, labels = load_ai_model_and_labels()
 
-# ==================== MAIN HEADER ====================
-st.markdown('<div class="main-header">🤟 ISL Sign Language Detector</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Professional Real-time Hand Gesture Recognition with Voice Output</div>', unsafe_allow_html=True)
+if model is None or labels is None:
+    st.error("⚠️ Cannot proceed without AI model. Please check files and restart.")
+    st.stop()
 
-# ==================== SIDEBAR ====================
-with st.sidebar:
-    st.header("⚙️ System Configuration")
-    
-    # Model Configuration
-    st.subheader("📁 Model Settings")
-    model_path = st.text_input("Model Path", value="model.h5", help="Path to your trained TensorFlow model")
-    
-    if st.button("🔄 Load Model", use_container_width=True):
-        try:
-            st.session_state.model = keras.models.load_model(model_path, compile=False)
-            st.success("✅ Model loaded successfully!")
-        except Exception as e:
-            st.error(f"❌ Error: {str(e)}")
-    
-    # Detection Settings
-    st.subheader("🎯 Detection Settings")
-    min_detection_confidence = st.slider(
-        "Detection Confidence",
-        0.0, 1.0, 0.7, 0.05,
-        help="Minimum confidence for hand detection"
-    )
-    
-    min_tracking_confidence = st.slider(
-        "Tracking Confidence",
-        0.0, 1.0, 0.7, 0.05,
-        help="Minimum confidence for hand tracking"
-    )
-    
-    prediction_threshold = st.slider(
-        "Prediction Threshold",
-        0.0, 1.0, 0.75, 0.05,
-        help="Minimum confidence to accept prediction"
-    )
-    
-    enable_voice = st.checkbox("🔊 Enable Voice Output", value=True)
-    
-    # Initialize Detector
-    if st.button("🚀 Initialize Detector", use_container_width=True):
-        try:
-            st.session_state.hands = mp_hands.Hands(
-                static_image_mode=False,
-                max_num_hands=1,
-                min_detection_confidence=min_detection_confidence,
-                min_tracking_confidence=min_tracking_confidence
-            )
-            st.success("✅ Detector initialized!")
-        except Exception as e:
-            st.error(f"❌ Error: {str(e)}")
-    
-    st.markdown("---")
-    
-    # System Status
-    st.subheader("📊 System Status")
-    
-    model_status = "✅ Loaded" if st.session_state.model else "❌ Not Loaded"
-    detector_status = "✅ Ready" if st.session_state.hands else "❌ Not Ready"
-    
-    st.markdown(f"**Model:** {model_status}")
-    st.markdown(f"**Detector:** {detector_status}")
-    st.markdown(f"**Total Predictions:** {len(st.session_state.predictions)}")
-    
-    # Clear History
-    if st.button("🗑️ Clear History", use_container_width=True):
-        st.session_state.predictions = []
-        st.session_state.word_buffer = deque(maxlen=10)
-        st.session_state.current_word = ""
-        st.rerun()
-
-# ==================== MAIN CONTENT ====================
-tab1, tab2, tab3 = st.tabs(["🎥 Live Detection", "📊 Statistics", "ℹ️ Help"])
-
-# ==================== LIVE DETECTION TAB ====================
-with tab1:
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.subheader("📹 Camera Feed")
+# ============================================================================
+# GESTURE STABILIZER CLASS
+# ============================================================================
+class GestureStabilizer:
+    """
+    Ensures stable gesture detection by requiring multiple consecutive 
+    detections of the same gesture before confirming.
+    """
+    def __init__(self, required_frames=10):
+        self.required_frames = required_frames
+        self.gesture_buffer = deque(maxlen=required_frames)
+        self.confidence_buffer = deque(maxlen=required_frames)
+        self.current_stable_gesture = None
+        self.current_stable_confidence = 0.0
         
-        # Control Buttons
-        btn_col1, btn_col2, btn_col3 = st.columns(3)
-        with btn_col1:
-            start_btn = st.button("▶️ Start Detection", use_container_width=True)
-        with btn_col2:
-            stop_btn = st.button("⏹️ Stop Detection", use_container_width=True)
-        with btn_col3:
-            speak_btn = st.button("🔊 Speak Word", use_container_width=True)
+    def add_detection(self, gesture, confidence):
+        """Add new detection and check for stability"""
+        self.gesture_buffer.append(gesture)
+        self.confidence_buffer.append(confidence)
         
-        # Video Frame
-        frame_placeholder = st.empty()
-        status_placeholder = st.empty()
-        
-    with col2:
-        st.subheader("🎯 Detection Results")
-        
-        # Current Prediction
-        prediction_placeholder = st.empty()
-        
-        # Confidence
-        confidence_placeholder = st.empty()
-        
-        # Current Word
-        st.markdown("### 📝 Current Word")
-        word_placeholder = st.empty()
-        
-        # Recent History
-        st.markdown("### 📜 Recent Detections")
-        history_placeholder = st.empty()
-    
-    # Handle Start Button
-    if start_btn:
-        if st.session_state.hands is None:
-            st.warning("⚠️ Please initialize the detector first!")
-        elif st.session_state.model is None:
-            st.warning("⚠️ Please load the model first!")
-        else:
-            st.session_state.is_running = True
-            st.rerun()
-    
-    # Handle Stop Button
-    if stop_btn:
-        st.session_state.is_running = False
-        st.rerun()
-    
-    # Handle Speak Button
-    if speak_btn and st.session_state.current_word:
-        if enable_voice:
-            text_to_speech(st.session_state.current_word)
-            st.success(f"🔊 Speaking: {st.session_state.current_word}")
-    
-    # Main Detection Loop
-    if st.session_state.is_running:
-        status_placeholder.markdown('<span class="status-running">🔴 LIVE</span>', unsafe_allow_html=True)
-        
-        cap = cv2.VideoCapture(0)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        
-        if not cap.isOpened():
-            st.error("❌ Cannot access camera!")
-            st.session_state.is_running = False
-        else:
-            last_prediction = None
-            stable_count = 0
+        if len(self.gesture_buffer) >= self.required_frames:
+            gesture_list = list(self.gesture_buffer)
+            valid_gestures = [g for g in gesture_list if g is not None]
             
-            while st.session_state.is_running:
+            if valid_gestures:
+                # Find most common gesture
+                most_common = max(set(valid_gestures), key=valid_gestures.count)
+                count = valid_gestures.count(most_common)
+                
+                # Require 80% agreement for stability
+                if count >= self.required_frames * 0.8:
+                    # Calculate average confidence for this gesture
+                    relevant_confidences = [
+                        c for g, c in zip(gesture_list, self.confidence_buffer) 
+                        if g == most_common
+                    ]
+                    avg_confidence = np.mean(relevant_confidences)
+                    
+                    self.current_stable_gesture = most_common
+                    self.current_stable_confidence = avg_confidence
+                    
+                    return True, most_common, avg_confidence
+        
+        return False, None, 0.0
+    
+    def get_stability_progress(self):
+        """Get current progress towards stability"""
+        if len(self.gesture_buffer) == 0:
+            return 0, None
+        
+        gesture_list = list(self.gesture_buffer)
+        valid_gestures = [g for g in gesture_list if g is not None]
+        
+        if not valid_gestures:
+            return 0, None
+        
+        most_common = max(set(valid_gestures), key=valid_gestures.count)
+        count = valid_gestures.count(most_common)
+        
+        return count, most_common
+    
+    def reset(self):
+        """Reset the stabilizer"""
+        self.gesture_buffer.clear()
+        self.confidence_buffer.clear()
+        self.current_stable_gesture = None
+        self.current_stable_confidence = 0.0
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+def extract_hand_landmarks(hand_landmarks):
+    """
+    Extract 3D coordinates (x, y, z) from MediaPipe hand landmarks.
+    Returns flattened array of 63 features (21 landmarks × 3 coordinates)
+    """
+    landmarks = []
+    for landmark in hand_landmarks.landmark:
+        landmarks.extend([landmark.x, landmark.y, landmark.z])
+    return np.array(landmarks).reshape(1, -1)
+
+def predict_gesture_with_ai(landmarks, model, labels, confidence_threshold=0.70):
+    """
+    Use AI model to predict ISL gesture from hand landmarks.
+    Returns (predicted_label, confidence) or (None, confidence) if below threshold
+    """
+    try:
+        # Get model prediction
+        predictions = model.predict(landmarks, verbose=0)
+        confidence = np.max(predictions)
+        predicted_class_index = np.argmax(predictions)
+        
+        # Only return prediction if confidence is above threshold
+        if confidence >= confidence_threshold:
+            predicted_label = labels[predicted_class_index]
+            return predicted_label, confidence
+        else:
+            return None, confidence
+            
+    except Exception as e:
+        st.error(f"Prediction error: {e}")
+        return None, 0.0
+
+# ============================================================================
+# SIDEBAR CONFIGURATION
+# ============================================================================
+st.sidebar.markdown("## ⚙️ Settings & Configuration")
+
+st.sidebar.markdown("### 🎯 Detection Parameters")
+confidence_threshold = st.sidebar.slider(
+    "AI Confidence Threshold",
+    min_value=0.50,
+    max_value=0.95,
+    value=0.70,
+    step=0.05,
+    help="Minimum confidence required for AI prediction (higher = more strict)"
+)
+
+stability_frames = st.sidebar.slider(
+    "Stability Frames Required",
+    min_value=5,
+    max_value=20,
+    value=10,
+    step=1,
+    help="Number of consecutive frames needed for stable detection (higher = more stable, less responsive)"
+)
+
+st.sidebar.markdown("### 📹 Display Options")
+show_landmarks = st.sidebar.checkbox("Show Hand Landmarks", value=True, help="Draw hand skeleton on video")
+show_fps = st.sidebar.checkbox("Show FPS Counter", value=True, help="Display frames per second")
+mirror_camera = st.sidebar.checkbox("Mirror Camera View", value=True, help="Flip camera horizontally")
+
+st.sidebar.markdown("### 📊 Camera Quality")
+camera_resolution = st.sidebar.selectbox(
+    "Resolution",
+    ["Low (320×240)", "Medium (640×480)", "High (1280×720)"],
+    index=1
+)
+
+# Parse resolution
+resolution_map = {
+    "Low (320×240)": (320, 240),
+    "Medium (640×480)": (640, 480),
+    "High (1280×720)": (1280, 720)
+}
+camera_width, camera_height = resolution_map[camera_resolution]
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("""
+### 📖 Instructions
+1. Click **Start Live Detection**
+2. Position hand clearly in frame
+3. Make ISL gesture
+4. Hold steady for stable detection
+5. Watch real-time AI predictions!
+
+### 🤖 AI Model Info
+- **Model:** Deep Neural Network
+- **Signs:** 35 ISL gestures
+- **Accuracy:** ~95%
+- **Framework:** TensorFlow/Keras
+""")
+
+# ============================================================================
+# MAIN UI
+# ============================================================================
+st.markdown('<p class="main-title">🤟 ISL Sign Language Detector</p>', unsafe_allow_html=True)
+st.markdown('<p class="subtitle">Real-Time AI-Powered Hand Gesture Recognition System</p>', unsafe_allow_html=True)
+
+# Create main layout
+col_left, col_right = st.columns([3, 2])
+
+# LEFT COLUMN - Webcam Feed
+with col_left:
+    st.markdown("""
+    <div class="webcam-container">
+        <h2 class="webcam-title">📹 Live Webcam Detection</h2>
+        <p class="webcam-instruction">
+            👆 Click 'Start' below to activate AI-powered real-time gesture recognition
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    video_placeholder = st.empty()
+    fps_placeholder = st.empty()
+
+# RIGHT COLUMN - Detection Results
+with col_right:
+    st.markdown("""
+    <div class="info-box">
+        <div class="info-title">🎯 Detection Result</div>
+        <p style="color: #90caf9; font-size: 1.1rem;">
+            AI predictions will appear here in real-time
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    result_placeholder = st.empty()
+    status_placeholder = st.empty()
+    progress_placeholder = st.empty()
+
+# Control Buttons
+st.markdown("---")
+col_btn1, col_btn2, col_btn3 = st.columns(3)
+
+with col_btn1:
+    start_detection = st.button(
+        "▶️ Start Live Detection", 
+        use_container_width=True, 
+        type="primary"
+    )
+
+with col_btn2:
+    stop_detection = st.button(
+        "⏹️ Stop Detection", 
+        use_container_width=True
+    )
+
+with col_btn3:
+    reset_system = st.button(
+        "🔄 Reset System", 
+        use_container_width=True
+    )
+
+# Session state management
+if 'is_detecting' not in st.session_state:
+    st.session_state.is_detecting = False
+if 'detection_history' not in st.session_state:
+    st.session_state.detection_history = []
+
+if start_detection:
+    st.session_state.is_detecting = True
+
+if stop_detection:
+    st.session_state.is_detecting = False
+
+if reset_system:
+    st.session_state.detection_history = []
+    st.rerun()
+
+# ============================================================================
+# MAIN DETECTION LOOP
+# ============================================================================
+if st.session_state.is_detecting:
+    
+    # Open webcam
+    cap = cv2.VideoCapture(0)
+    
+    if not cap.isOpened():
+        st.error("❌ Cannot access webcam")
+        st.warning("**Troubleshooting:**")
+        st.info("• Ensure no other application is using the camera")
+        st.info("• Check browser camera permissions")
+        st.info("• This must run LOCALLY (not on Hugging Face)")
+        st.info("• Try restarting your browser")
+        st.session_state.is_detecting = False
+        
+    else:
+        # Configure camera
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, camera_width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, camera_height)
+        cap.set(cv2.CAP_PROP_FPS, 30)
+        
+        # Initialize components
+        stabilizer = GestureStabilizer(required_frames=stability_frames)
+        fps_counter = 0
+        fps_start_time = time.time()
+        current_fps = 0
+        
+        # Initialize MediaPipe Hands
+        with mp_hands.Hands(
+            static_image_mode=False,
+            max_num_hands=1,
+            min_detection_confidence=0.7,
+            min_tracking_confidence=0.7,
+            model_complexity=1
+        ) as hands:
+            
+            st.info("🟢 **System Active** - AI model processing live video feed...")
+            
+            while st.session_state.is_detecting:
+                # Capture frame
                 ret, frame = cap.read()
+                
                 if not ret:
+                    st.error("❌ Failed to capture frame")
                     break
                 
-                # Process frame
-                frame = cv2.flip(frame, 1)
-                image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                image.flags.writeable = False
+                # Mirror if enabled
+                if mirror_camera:
+                    frame = cv2.flip(frame, 1)
                 
-                results = st.session_state.hands.process(image)
+                # Convert to RGB for MediaPipe
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 
-                image.flags.writeable = True
-                current_sign = None
-                current_conf = 0.0
+                # Process with MediaPipe
+                hand_results = hands.process(rgb_frame)
                 
-                if results.multi_hand_landmarks:
-                    for hand_landmarks in results.multi_hand_landmarks:
-                        mp_drawing.draw_landmarks(
-                            image,
-                            hand_landmarks,
-                            mp_hands.HAND_CONNECTIONS,
-                            mp_drawing_styles.get_default_hand_landmarks_style(),
-                            mp_drawing_styles.get_default_hand_connections_style()
-                        )
-                    
-                    keypoints = extract_keypoints(results)
-                    sign, confidence = predict_sign(keypoints, st.session_state.model)
-                    
-                    if sign and confidence > prediction_threshold:
-                        current_sign = sign
-                        current_conf = confidence
+                # Initialize detection variables
+                detected_gesture = None
+                detection_confidence = 0.0
+                
+                # Process hand landmarks if detected
+                if hand_results.multi_hand_landmarks:
+                    for hand_landmarks in hand_results.multi_hand_landmarks:
                         
-                        # Stabilize prediction
-                        if sign == last_prediction:
-                            stable_count += 1
-                        else:
-                            stable_count = 0
-                            last_prediction = sign
+                        # Draw hand landmarks
+                        if show_landmarks:
+                            mp_drawing.draw_landmarks(
+                                rgb_frame,
+                                hand_landmarks,
+                                mp_hands.HAND_CONNECTIONS,
+                                mp_drawing_styles.get_default_hand_landmarks_style(),
+                                mp_drawing_styles.get_default_hand_connections_style()
+                            )
                         
-                        # Add to word after stable detection
-                        if stable_count == 5:
-                            st.session_state.word_buffer.append(sign)
-                            st.session_state.current_word = ''.join(st.session_state.word_buffer)
-                            
-                            # Add to predictions
-                            st.session_state.predictions.append({
-                                'sign': sign,
-                                'confidence': confidence,
-                                'time': datetime.now()
-                            })
-                            
-                            # Speak if enabled
-                            if enable_voice:
-                                text_to_speech(sign)
-                            
-                            stable_count = 0
-                        
-                        # Draw on frame
-                        cv2.putText(
-                            image,
-                            f"{sign} ({confidence:.0%})",
-                            (20, 60),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            2,
-                            (0, 255, 0),
-                            3
+                        # Extract landmarks and run AI prediction
+                        landmarks_array = extract_hand_landmarks(hand_landmarks)
+                        detected_gesture, detection_confidence = predict_gesture_with_ai(
+                            landmarks_array,
+                            model,
+                            labels,
+                            confidence_threshold
                         )
                 
-                # Display frame
-                frame_placeholder.image(image, channels="RGB", use_container_width=True)
-                
-                # Update UI
-                if current_sign:
-                    prediction_placeholder.markdown(
-                        f'<div class="prediction-card">{current_sign}</div>',
-                        unsafe_allow_html=True
-                    )
-                    confidence_placeholder.progress(float(current_conf))
-                
-                word_placeholder.markdown(
-                    f'<div class="stats-card"><h2>{st.session_state.current_word or "..."}</h2></div>',
-                    unsafe_allow_html=True
+                # Add detection to stabilizer
+                is_stable, stable_gesture, stable_confidence = stabilizer.add_detection(
+                    detected_gesture,
+                    detection_confidence
                 )
                 
-                # Show recent history
-                if st.session_state.predictions:
-                    recent = list(st.session_state.predictions)[-5:]
-                    history_text = ""
-                    for p in reversed(recent):
-                        history_text += f"**{p['sign']}** ({p['confidence']:.0%})\n\n"
-                    history_placeholder.markdown(history_text)
-            
-            cap.release()
-    else:
-        status_placeholder.markdown('<span class="status-stopped">⏸️ STOPPED</span>', unsafe_allow_html=True)
+                # Calculate FPS
+                fps_counter += 1
+                if time.time() - fps_start_time >= 1.0:
+                    current_fps = fps_counter
+                    fps_counter = 0
+                    fps_start_time = time.time()
+                
+                # Display video frame
+                video_placeholder.image(rgb_frame, channels="RGB", use_container_width=True)
+                
+                # Display FPS if enabled
+                if show_fps:
+                    fps_placeholder.metric("📊 FPS", current_fps)
+                
+                # Display detection results
+                if is_stable and stable_gesture:
+                    # STABLE DETECTION - Show result prominently
+                    result_placeholder.markdown(
+                        f"""
+                        <div class="result-container">
+                            <p class="result-text">{stable_gesture}</p>
+                            <p class="confidence-text">
+                                AI Confidence: {stable_confidence:.1%}
+                            </p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+                    
+                    status_placeholder.markdown(
+                        '<div class="status-stable">✓ STABLE DETECTION</div>',
+                        unsafe_allow_html=True
+                    )
+                    
+                    progress_placeholder.success(f"✅ Confirmed after {stability_frames} consecutive frames")
+                    
+                    # Add to history if new
+                    if not st.session_state.detection_history or st.session_state.detection_history[-1] != stable_gesture:
+                        st.session_state.detection_history.append(stable_gesture)
+                
+                elif detected_gesture:
+                    # DETECTING - Show progress
+                    progress_count, current_gesture = stabilizer.get_stability_progress()
+                    
+                    result_placeholder.info(
+                        f"🔍 **Detecting:** {current_gesture}\n\n"
+                        f"⏳ **Stabilizing...** ({progress_count}/{stability_frames} frames)\n\n"
+                        f"📊 **Confidence:** {detection_confidence:.1%}"
+                    )
+                    
+                    status_placeholder.markdown(
+                        '<div class="status-detecting">⏳ STABILIZING...</div>',
+                        unsafe_allow_html=True
+                    )
+                    
+                    progress_placeholder.progress(
+                        progress_count / stability_frames,
+                        text=f"Hold steady: {progress_count}/{stability_frames}"
+                    )
+                
+                elif hand_results.multi_hand_landmarks:
+                    # HAND DETECTED BUT LOW CONFIDENCE
+                    result_placeholder.warning(
+                        f"👋 **Hand Detected**\n\n"
+                        f"⚠️ Low AI confidence ({detection_confidence:.1%})\n\n"
+                        f"**Tips:**\n"
+                        f"• Make a clear, distinct gesture\n"
+                        f"• Ensure good lighting\n"
+                        f"• Keep hand steady"
+                    )
+                    status_placeholder.empty()
+                    progress_placeholder.empty()
+                
+                else:
+                    # NO HAND DETECTED
+                    result_placeholder.info(
+                        "👋 **Waiting for hand...**\n\n"
+                        "Position your hand clearly in the camera frame"
+                    )
+                    status_placeholder.empty()
+                    progress_placeholder.empty()
+                
+                # Check if should stop
+                if not st.session_state.is_detecting:
+                    break
+                
+                # Small delay to prevent overwhelming
+                time.sleep(0.01)
+        
+        # Cleanup
+        cap.release()
+        video_placeholder.empty()
+        result_placeholder.empty()
+        status_placeholder.empty()
+        progress_placeholder.empty()
+        fps_placeholder.empty()
+        st.info("⏹️ Detection stopped")
 
-# ==================== STATISTICS TAB ====================
-with tab2:
-    st.subheader("📊 Detection Statistics")
-    
-    if st.session_state.predictions:
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("Total Detections", len(st.session_state.predictions))
-        
-        with col2:
-            avg_conf = np.mean([p['confidence'] for p in st.session_state.predictions])
-            st.metric("Avg Confidence", f"{avg_conf:.0%}")
-        
-        with col3:
-            unique_signs = len(set([p['sign'] for p in st.session_state.predictions]))
-            st.metric("Unique Signs", unique_signs)
-        
-        # Sign frequency
-        st.markdown("### 📈 Sign Frequency")
-        from collections import Counter
-        sign_counts = Counter([p['sign'] for p in st.session_state.predictions])
-        
-        for sign, count in sign_counts.most_common(10):
-            st.write(f"**{sign}**: {count} times")
-    else:
-        st.info("No detections yet. Start the camera to begin!")
+else:
+    st.info("👆 Click **▶️ Start Live Detection** to begin AI-powered gesture recognition")
 
-# ==================== HELP TAB ====================
-with tab3:
-    st.markdown("""
-    ## 📖 How to Use
+# ============================================================================
+# DETECTION HISTORY
+# ============================================================================
+if st.session_state.detection_history:
+    st.markdown("---")
+    st.subheader("📜 Detection History")
     
-    ### 🚀 Quick Start
-    1. **Load Model**: Enter your model path in sidebar and click "Load Model"
-    2. **Initialize Detector**: Click "Initialize Detector"
-    3. **Start Detection**: Click "▶️ Start Detection" in Live Detection tab
-    4. **Show Signs**: Display hand gestures in front of camera
-    5. **Build Words**: Signs are automatically added to form words
-    6. **Speak**: Click "🔊 Speak Word" to hear the detected word
+    history_cols = st.columns(min(len(st.session_state.detection_history), 6))
+    recent_history = st.session_state.detection_history[-6:]
     
-    ### 💡 Tips for Best Results
-    - 🌞 Ensure good lighting
-    - 🖐️ Keep hand clearly visible
-    - 📏 Maintain stable hand position for 1-2 seconds
-    - 🎯 Adjust confidence thresholds in sidebar
-    - 🔊 Enable voice output for audio feedback
-    
-    ### ⚙️ System Requirements
-    - 📷 Working webcam
-    - 🧠 Trained TensorFlow model (`.h5` file)
-    - 🌐 Internet connection for voice synthesis
-    
-    ### 🛠️ Technical Stack
-    - **MediaPipe**: Hand tracking
-    - **TensorFlow**: Gesture classification
-    - **gTTS**: Text-to-speech
-    - **Streamlit**: Web interface
-    - **OpenCV**: Video processing
-    
-    ### 📞 Support
-    For issues or questions, please check the documentation.
-    """)
+    for idx, gesture in enumerate(recent_history):
+        with history_cols[idx]:
+            st.info(f"**#{idx+1}**\n\n{gesture}")
 
-# ==================== FOOTER ====================
+# ============================================================================
+# FOOTER
+# ============================================================================
 st.markdown("---")
-st.markdown(
-    """
-    <div style='text-align: center; color: #666;'>
-        <p><strong>ISL Sign Language Detector v1.0</strong></p>
-        <p>Powered by MediaPipe, TensorFlow & Streamlit | Made with ❤️ for Accessibility</p>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 20px;">
+    <p style="font-size: 1.1rem;">
+        <strong>🤖 Powered by Artificial Intelligence</strong>
+    </p>
+    <p>
+        Built with ❤️ using <strong>Streamlit</strong> • <strong>MediaPipe</strong> • <strong>TensorFlow</strong> • <strong>OpenCV</strong>
+    </p>
+    <p style="font-size: 0.9rem; color: #999;">
+        Deep Learning Model trained on 35 Indian Sign Language gestures
+    </p>
+</div>
+""", unsafe_allow_html=True)
