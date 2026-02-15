@@ -1,14 +1,43 @@
 import streamlit as st
-import cv2
 import numpy as np
-from mediapipe import solutions as mp_solutions
-from tensorflow import keras
 from PIL import Image
 import io
 from gtts import gTTS
 import base64
 import tempfile
 import os
+
+# Import cv2 with error handling
+try:
+    import cv2
+except ImportError:
+    st.error("OpenCV (cv2) not installed. Install with: pip install opencv-python-headless")
+    st.stop()
+
+# Import MediaPipe with correct structure
+try:
+    from mediapipe.python.solutions import hands as mp_hands
+    from mediapipe.python.solutions import drawing_utils as mp_drawing
+    from mediapipe.python.solutions import drawing_styles as mp_drawing_styles
+    MEDIAPIPE_OK = True
+except ImportError:
+    try:
+        # Alternative import method
+        import mediapipe as mp
+        mp_hands = mp.solutions.hands
+        mp_drawing = mp.solutions.drawing_utils
+        mp_drawing_styles = mp.solutions.drawing_styles
+        MEDIAPIPE_OK = True
+    except Exception as e:
+        st.error(f"MediaPipe Error: {e}. Install with: pip install mediapipe")
+        MEDIAPIPE_OK = False
+
+# Import TensorFlow/Keras
+try:
+    from tensorflow import keras
+except ImportError:
+    st.error("TensorFlow not installed. Install with: pip install tensorflow")
+    st.stop()
 
 # ============================================================================
 # PAGE CONFIGURATION
@@ -110,22 +139,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================================================
-# INITIALIZE MEDIAPIPE
-# ============================================================================
-@st.cache_resource
-def init_mediapipe():
-    try:
-        mp_hands = mp_solutions.hands
-        mp_drawing = mp_solutions.drawing_utils
-        mp_drawing_styles = mp_solutions.drawing_styles
-        return mp_hands, mp_drawing, mp_drawing_styles, True
-    except Exception as e:
-        st.error(f"MediaPipe Error: {e}")
-        return None, None, None, False
-
-mp_hands, mp_drawing, mp_drawing_styles, MEDIAPIPE_OK = init_mediapipe()
-
-# ============================================================================
 # LOAD AI MODEL
 # ============================================================================
 @st.cache_resource
@@ -134,6 +147,10 @@ def load_model():
         model = keras.models.load_model('isl_model.h5')
         labels = np.load('isl_labels.npy', allow_pickle=True)
         return model, labels, True
+    except FileNotFoundError as e:
+        st.error(f"Model files not found: {e}")
+        st.info("Please ensure 'isl_model.h5' and 'isl_labels.npy' are in the same directory as this script.")
+        return None, None, False
     except Exception as e:
         st.error(f"Model loading error: {e}")
         return None, None, False
@@ -160,7 +177,8 @@ def predict_gesture(landmarks, model, labels, threshold=0.70):
         if confidence >= threshold:
             return labels[class_idx], confidence
         return None, confidence
-    except:
+    except Exception as e:
+        st.error(f"Prediction error: {e}")
         return None, 0.0
 
 def text_to_speech(text):
@@ -194,46 +212,48 @@ def text_to_speech(text):
         st.error(f"Speech error: {e}")
         return None
 
-def process_image(image, mp_hands, mp_drawing, mp_drawing_styles, model, labels):
+def process_image(image):
     """Process uploaded image or webcam capture"""
-    # Convert PIL to OpenCV format
-    img_array = np.array(image)
-    
-    # Convert RGB to BGR for OpenCV
-    if len(img_array.shape) == 3 and img_array.shape[2] == 3:
-        img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-    else:
-        img_bgr = img_array
-    
-    # Convert back to RGB for MediaPipe
-    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    
-    # Process with MediaPipe
-    with mp_hands.Hands(
-        static_image_mode=True,
-        max_num_hands=1,
-        min_detection_confidence=0.7
-    ) as hands:
-        results = hands.process(img_rgb)
+    try:
+        # Convert PIL to numpy array
+        img_array = np.array(image)
         
-        if results.multi_hand_landmarks:
-            for hand_landmarks in results.multi_hand_landmarks:
-                # Draw landmarks
-                mp_drawing.draw_landmarks(
-                    img_rgb,
-                    hand_landmarks,
-                    mp_hands.HAND_CONNECTIONS,
-                    mp_drawing_styles.get_default_hand_landmarks_style(),
-                    mp_drawing_styles.get_default_hand_connections_style()
-                )
-                
-                # Predict
-                landmarks = extract_landmarks(hand_landmarks)
-                gesture, confidence = predict_gesture(landmarks, model, labels)
-                
-                return img_rgb, gesture, confidence, True
+        # Convert RGB to BGR for OpenCV (if needed)
+        if len(img_array.shape) == 3 and img_array.shape[2] == 3:
+            img_rgb = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+            img_rgb = cv2.cvtColor(img_rgb, cv2.COLOR_BGR2RGB)
+        else:
+            img_rgb = img_array
         
-        return img_rgb, None, 0.0, False
+        # Process with MediaPipe
+        with mp_hands.Hands(
+            static_image_mode=True,
+            max_num_hands=1,
+            min_detection_confidence=0.7
+        ) as hands:
+            results = hands.process(img_rgb)
+            
+            if results.multi_hand_landmarks:
+                for hand_landmarks in results.multi_hand_landmarks:
+                    # Draw landmarks
+                    mp_drawing.draw_landmarks(
+                        img_rgb,
+                        hand_landmarks,
+                        mp_hands.HAND_CONNECTIONS,
+                        mp_drawing_styles.get_default_hand_landmarks_style(),
+                        mp_drawing_styles.get_default_hand_connections_style()
+                    )
+                    
+                    # Predict
+                    landmarks = extract_landmarks(hand_landmarks)
+                    gesture, confidence = predict_gesture(landmarks, model, labels)
+                    
+                    return img_rgb, gesture, confidence, True
+            
+            return img_rgb, None, 0.0, False
+    except Exception as e:
+        st.error(f"Image processing error: {e}")
+        return img_array, None, 0.0, False
 
 # ============================================================================
 # SIDEBAR
@@ -277,9 +297,27 @@ enable_voice = st.sidebar.checkbox("🔊 Enable Voice Output", value=True,
 st.markdown('<h1 style="text-align: center; color: #667eea;">🤟 ISL Sign Language Detector</h1>', unsafe_allow_html=True)
 st.markdown('<p style="text-align: center; color: #888; font-size: 1.2rem;">AI-Powered Hand Gesture Recognition with Voice Output 🔊</p>', unsafe_allow_html=True)
 
-# Check if model loaded
+# Check if model and MediaPipe loaded
 if not MODEL_OK or not MEDIAPIPE_OK:
-    st.error("⚠️ System not ready. Please ensure model files are present.")
+    st.error("⚠️ System not ready. Please ensure model files are present and all dependencies are installed.")
+    
+    # Show installation instructions
+    st.markdown("""
+    ### Required Installations:
+    ```bash
+    pip install streamlit
+    pip install opencv-python-headless
+    pip install mediapipe
+    pip install tensorflow
+    pip install gtts
+    pip install pillow
+    pip install numpy
+    ```
+    
+    ### Required Files:
+    - `isl_model.h5` (your trained model)
+    - `isl_labels.npy` (your labels file)
+    """)
     st.stop()
 
 # Create tabs for different input methods
@@ -306,9 +344,7 @@ with tab1:
         image = Image.open(camera_photo)
         
         # Process image
-        processed_img, gesture, confidence, hand_detected = process_image(
-            image, mp_hands, mp_drawing, mp_drawing_styles, model, labels
-        )
+        processed_img, gesture, confidence, hand_detected = process_image(image)
         
         # Display results
         col1, col2 = st.columns(2)
@@ -332,7 +368,7 @@ with tab1:
                 
                 # Voice output - just speak the letter/number
                 if enable_voice:
-                    st.markdown('<div class="voice-indicator">🔊 Speaking: {}</div>'.format(gesture), 
+                    st.markdown(f'<div class="voice-indicator">🔊 Speaking: {gesture}</div>', 
                               unsafe_allow_html=True)
                     # Just speak the gesture directly (like "H" or "9")
                     audio_html = text_to_speech(str(gesture))
@@ -370,9 +406,7 @@ with tab2:
         image = Image.open(uploaded_file)
         
         # Process image
-        processed_img, gesture, confidence, hand_detected = process_image(
-            image, mp_hands, mp_drawing, mp_drawing_styles, model, labels
-        )
+        processed_img, gesture, confidence, hand_detected = process_image(image)
         
         # Display results
         col1, col2 = st.columns(2)
@@ -396,7 +430,7 @@ with tab2:
                 
                 # Voice output - just speak the letter/number
                 if enable_voice:
-                    st.markdown('<div class="voice-indicator">🔊 Speaking: {}</div>'.format(gesture), 
+                    st.markdown(f'<div class="voice-indicator">🔊 Speaking: {gesture}</div>', 
                               unsafe_allow_html=True)
                     # Just speak the gesture directly (like "H" or "9")
                     audio_html = text_to_speech(str(gesture))
