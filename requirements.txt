@@ -2,6 +2,6 @@ streamlit>=1.40.0
 mediapipe==0.10.32
 tensorflow==2.20.0
 opencv-python-headless==4.10.0.84
-numpy==2.0.0
+numpy>=2.1.0
 pillow==10.4.0
 gtts==2.5.0
