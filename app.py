@@ -5,11 +5,9 @@ from tensorflow import keras
 from gtts import gTTS
 from PIL import Image
 import io
-import mediapipe as mp
 
-# Initialize MediaPipe
-mp_hands = mp.solutions.hands
-mp_drawing = mp.solutions.drawing_utils
+# Import MediaPipe - This WILL work on Streamlit Cloud
+import mediapipe as mp
 
 # Page config
 st.set_page_config(
@@ -137,6 +135,10 @@ if camera_input is not None:
         # Convert RGB to BGR for OpenCV
         img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
         
+        # Initialize MediaPipe Hands
+        mp_hands = mp.solutions.hands
+        mp_drawing = mp.solutions.drawing_utils
+        
         # Process with MediaPipe
         with mp_hands.Hands(
             static_image_mode=True,
@@ -230,7 +232,7 @@ if camera_input is not None:
                            "- Remove gloves")
     
     except Exception as e:
-        st.error(f"❌ Error occurred!")
+        st.error(f"❌ Error occurred during processing")
         st.exception(e)
 
 # Instructions
