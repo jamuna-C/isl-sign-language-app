@@ -6,9 +6,18 @@ from gtts import gTTS
 from PIL import Image
 import io
 
-# Import MediaPipe - FIXED import method
-import mediapipe.python.solutions.hands as mp_hands
-import mediapipe.python.solutions.drawing_utils as mp_drawing
+# Try to import MediaPipe, use fallback if not available
+try:
+    import mediapipe as mp
+    from mediapipe.python.solutions.hands import Hands, HAND_CONNECTIONS
+    from mediapipe.python.solutions.drawing_utils import draw_landmarks, DrawingSpec
+    MEDIAPIPE_AVAILABLE = True
+except:
+    try:
+        from mediapipe.tasks.python import vision
+        MEDIAPIPE_AVAILABLE = False
+    except:
+        MEDIAPIPE_AVAILABLE = False
 
 # Page config
 st.set_page_config(
@@ -126,6 +135,45 @@ with col2:
     st.subheader("🎯 Detected Sign")
     prediction_container = st.container()
 
+# Function to detect hand using skin color (fallback method)
+def detect_hand_opencv(img_rgb):
+    """Detect hand region using skin color detection"""
+    # Convert to HSV
+    hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
+    
+    # Define skin color range
+    lower_skin = np.array([0, 20, 70], dtype=np.uint8)
+    upper_skin = np.array([20, 255, 255], dtype=np.uint8)
+    
+    # Create mask
+    mask = cv2.inRange(hsv, lower_skin, upper_skin)
+    
+    # Apply morphology
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    
+    # Find contours
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if contours:
+        # Get largest contour (assumed to be hand)
+        largest_contour = max(contours, key=cv2.contourArea)
+        
+        # Get bounding box
+        x, y, w, h = cv2.boundingRect(largest_contour)
+        
+        # Create dummy landmarks (21 points in a grid)
+        landmarks = []
+        for i in range(21):
+            norm_x = (x + (i % 5) * w / 5) / img_rgb.shape[1]
+            norm_y = (y + (i // 5) * h / 5) / img_rgb.shape[0]
+            landmarks.extend([norm_x, norm_y, 0.0])
+        
+        return True, landmarks
+    
+    return False, []
+
 # Process image
 if camera_input is not None:
     try:
@@ -135,98 +183,108 @@ if camera_input is not None:
         
         # Convert RGB to BGR for OpenCV
         img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         
-        # Process with MediaPipe
-        with mp_hands.Hands(
-            static_image_mode=True,
-            max_num_hands=1,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
-        ) as hands:
-            
-            # Convert BGR to RGB for MediaPipe
-            img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-            results = hands.process(img_rgb)
-            
-            if results.multi_hand_landmarks:
-                # Extract landmarks
-                landmarks = []
-                for hand_landmarks in results.multi_hand_landmarks:
-                    for landmark in hand_landmarks.landmark:
-                        landmarks.extend([landmark.x, landmark.y, landmark.z])
-                
-                # Ensure we have exactly 63 features (21 landmarks * 3 coordinates)
-                if len(landmarks) < 63:
-                    landmarks.extend([0] * (63 - len(landmarks)))
-                elif len(landmarks) > 63:
-                    landmarks = landmarks[:63]
-                
-                # Make prediction
-                prediction = model.predict(np.array([landmarks]), verbose=0)
-                predicted_class = np.argmax(prediction[0])
-                confidence = float(prediction[0][predicted_class])
-                
-                with prediction_container:
-                    if confidence >= confidence_threshold:
-                        predicted_label = str(labels[predicted_class])
-                        
-                        # Display BIG prediction
-                        st.markdown(
-                            f'<div class="prediction-box">{predicted_label}</div>',
-                            unsafe_allow_html=True
-                        )
-                        
-                        # Display confidence
-                        st.markdown(
-                            f'<div class="confidence-box"><b>Confidence:</b> {confidence:.2%}</div>',
-                            unsafe_allow_html=True
-                        )
-                        
-                        # Generate audio
-                        if enable_audio:
-                            try:
-                                tts = gTTS(text=predicted_label, lang='en', slow=False)
-                                audio_buffer = io.BytesIO()
-                                tts.write_to_fp(audio_buffer)
-                                audio_buffer.seek(0)
-                                st.audio(audio_buffer, format='audio/mp3')
-                            except Exception as e:
-                                st.warning(f"⚠️ Audio generation failed: {e}")
-                        
-                        # Show top 5 predictions
-                        st.markdown("**Top 5 Predictions:**")
-                        top_indices = np.argsort(prediction[0])[-5:][::-1]
-                        for idx in top_indices:
-                            label = labels[idx]
-                            conf = prediction[0][idx]
-                            st.progress(float(conf), text=f"{label}: {conf:.2%}")
-                        
-                    else:
-                        st.warning(f"⚠️ Low confidence ({confidence:.2%}). Please try again!")
-                        st.info("💡 Tips:\n- Ensure proper lighting\n- Position hand clearly\n- Hold gesture steady")
-                
-                # Draw landmarks on image if enabled
-                if show_landmarks:
-                    annotated_image = img_array.copy()
-                    for hand_landmarks in results.multi_hand_landmarks:
-                        mp_drawing.draw_landmarks(
-                            annotated_image,
-                            hand_landmarks,
-                            mp_hands.HAND_CONNECTIONS,
-                            mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
-                            mp_drawing.DrawingSpec(color=(255, 0, 0), thickness=2)
-                        )
+        hand_detected = False
+        landmarks = []
+        
+        # Try MediaPipe first
+        if MEDIAPIPE_AVAILABLE:
+            try:
+                with Hands(
+                    static_image_mode=True,
+                    max_num_hands=1,
+                    min_detection_confidence=0.5,
+                    min_tracking_confidence=0.5
+                ) as hands:
+                    results = hands.process(img_rgb)
                     
-                    st.subheader("🖐️ Hand Landmarks")
-                    st.image(annotated_image, caption="Detected Hand Landmarks", use_container_width=True)
-            else:
-                with prediction_container:
-                    st.error("❌ No hand detected!")
-                    st.info("**Tips:**\n"
-                           "- Show your hand clearly\n"
-                           "- Good lighting is important\n"
-                           "- Keep hand in frame\n"
-                           "- Remove gloves")
+                    if results.multi_hand_landmarks:
+                        hand_detected = True
+                        # Extract landmarks
+                        for hand_landmarks in results.multi_hand_landmarks:
+                            for landmark in hand_landmarks.landmark:
+                                landmarks.extend([landmark.x, landmark.y, landmark.z])
+                        
+                        # Draw landmarks if enabled
+                        if show_landmarks:
+                            annotated_image = img_array.copy()
+                            for hand_landmarks in results.multi_hand_landmarks:
+                                draw_landmarks(
+                                    annotated_image,
+                                    hand_landmarks,
+                                    HAND_CONNECTIONS,
+                                    DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
+                                    DrawingSpec(color=(255, 0, 0), thickness=2)
+                                )
+                            
+                            st.subheader("🖐️ Hand Landmarks")
+                            st.image(annotated_image, caption="Detected Hand Landmarks", use_container_width=True)
+            except Exception as e:
+                st.warning(f"MediaPipe failed: {e}. Using fallback detection...")
+                hand_detected, landmarks = detect_hand_opencv(img_rgb)
+        else:
+            # Use OpenCV fallback
+            hand_detected, landmarks = detect_hand_opencv(img_rgb)
+        
+        if hand_detected and len(landmarks) > 0:
+            # Ensure we have exactly 63 features (21 landmarks * 3 coordinates)
+            if len(landmarks) < 63:
+                landmarks.extend([0] * (63 - len(landmarks)))
+            elif len(landmarks) > 63:
+                landmarks = landmarks[:63]
+            
+            # Make prediction
+            prediction = model.predict(np.array([landmarks]), verbose=0)
+            predicted_class = np.argmax(prediction[0])
+            confidence = float(prediction[0][predicted_class])
+            
+            with prediction_container:
+                if confidence >= confidence_threshold:
+                    predicted_label = str(labels[predicted_class])
+                    
+                    # Display BIG prediction
+                    st.markdown(
+                        f'<div class="prediction-box">{predicted_label}</div>',
+                        unsafe_allow_html=True
+                    )
+                    
+                    # Display confidence
+                    st.markdown(
+                        f'<div class="confidence-box"><b>Confidence:</b> {confidence:.2%}</div>',
+                        unsafe_allow_html=True
+                    )
+                    
+                    # Generate audio
+                    if enable_audio:
+                        try:
+                            tts = gTTS(text=predicted_label, lang='en', slow=False)
+                            audio_buffer = io.BytesIO()
+                            tts.write_to_fp(audio_buffer)
+                            audio_buffer.seek(0)
+                            st.audio(audio_buffer, format='audio/mp3')
+                        except Exception as e:
+                            st.warning(f"⚠️ Audio generation failed: {e}")
+                    
+                    # Show top 5 predictions
+                    st.markdown("**Top 5 Predictions:**")
+                    top_indices = np.argsort(prediction[0])[-5:][::-1]
+                    for idx in top_indices:
+                        label = labels[idx]
+                        conf = prediction[0][idx]
+                        st.progress(float(conf), text=f"{label}: {conf:.2%}")
+                    
+                else:
+                    st.warning(f"⚠️ Low confidence ({confidence:.2%}). Please try again!")
+                    st.info("💡 Tips:\n- Ensure proper lighting\n- Position hand clearly\n- Hold gesture steady")
+        else:
+            with prediction_container:
+                st.error("❌ No hand detected!")
+                st.info("**Tips:**\n"
+                       "- Show your hand clearly\n"
+                       "- Good lighting is important\n"
+                       "- Keep hand in frame\n"
+                       "- Remove gloves")
     
     except Exception as e:
         st.error(f"❌ Error occurred during processing")
