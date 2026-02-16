@@ -6,8 +6,9 @@ from gtts import gTTS
 from PIL import Image
 import io
 
-# Import MediaPipe - This WILL work on Streamlit Cloud
-import mediapipe as mp
+# Import MediaPipe - FIXED import method
+import mediapipe.python.solutions.hands as mp_hands
+import mediapipe.python.solutions.drawing_utils as mp_drawing
 
 # Page config
 st.set_page_config(
@@ -134,10 +135,6 @@ if camera_input is not None:
         
         # Convert RGB to BGR for OpenCV
         img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-        
-        # Initialize MediaPipe Hands
-        mp_hands = mp.solutions.hands
-        mp_drawing = mp.solutions.drawing_utils
         
         # Process with MediaPipe
         with mp_hands.Hands(
