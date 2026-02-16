@@ -6,10 +6,16 @@ from gtts import gTTS
 from PIL import Image
 import io
 
-# Import MediaPipe - CORRECT WAY that works on Streamlit Cloud
-import mediapipe as mp
-from mediapipe.python.solutions import hands as mp_hands
-from mediapipe.python.solutions import drawing_utils as mp_drawing
+# Import MediaPipe - SIMPLEST working method
+try:
+    import mediapipe as mp
+    mp_hands = mp.solutions.hands
+    mp_drawing = mp.solutions.drawing_utils
+except AttributeError:
+    # Fallback for newer MediaPipe versions
+    from mediapipe.tasks.python import vision
+    mp_hands = None
+    mp_drawing = None
 
 # Page config
 st.set_page_config(
@@ -160,102 +166,105 @@ if camera_input is not None:
         # Convert RGB to BGR for OpenCV
         img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
         
-        # Process with MediaPipe - using correct import
-        with mp_hands.Hands(
-            static_image_mode=True,
-            max_num_hands=1,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
-        ) as hands:
-            
-            # Convert BGR to RGB for MediaPipe
-            img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-            results = hands.process(img_rgb)
-            
-            if results.multi_hand_landmarks:
-                # Extract landmarks
-                landmarks = []
-                for hand_landmarks in results.multi_hand_landmarks:
-                    for landmark in hand_landmarks.landmark:
-                        landmarks.extend([landmark.x, landmark.y, landmark.z])
+        if mp_hands is not None:
+            # Use legacy MediaPipe API (works with mediapipe 0.10.x)
+            with mp_hands.Hands(
+                static_image_mode=True,
+                max_num_hands=1,
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5
+            ) as hands:
                 
-                # Ensure we have exactly 63 features (21 landmarks * 3 coordinates)
-                if len(landmarks) < 63:
-                    landmarks.extend([0] * (63 - len(landmarks)))
-                elif len(landmarks) > 63:
-                    landmarks = landmarks[:63]
+                # Convert BGR to RGB for MediaPipe
+                img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+                results = hands.process(img_rgb)
                 
-                # Make prediction
-                prediction = model.predict(np.array([landmarks]), verbose=0)
-                predicted_class = np.argmax(prediction[0])
-                confidence = float(prediction[0][predicted_class])
-                
-                with prediction_container:
-                    if confidence >= confidence_threshold:
-                        predicted_label = str(labels[predicted_class])
-                        
-                        # Display prediction with styling
-                        st.markdown(
-                            f'<div class="prediction-box">{predicted_label}</div>',
-                            unsafe_allow_html=True
-                        )
-                        
-                        # Display confidence
-                        st.markdown(
-                            f'<div class="confidence-box"><b>Confidence:</b> {confidence:.2%}</div>',
-                            unsafe_allow_html=True
-                        )
-                        
-                        # Add to sequence
-                        if st.button("➕ Add to Text Sequence"):
-                            st.session_state.detected_sequence.append(predicted_label)
-                            st.rerun()
-                        
-                        # Generate audio for single prediction
-                        if enable_audio:
-                            try:
-                                tts = gTTS(text=predicted_label, lang='en', slow=False)
-                                audio_buffer = io.BytesIO()
-                                tts.write_to_fp(audio_buffer)
-                                audio_buffer.seek(0)
-                                st.audio(audio_buffer, format='audio/mp3')
-                            except Exception as e:
-                                st.warning(f"⚠️ Audio generation failed: {e}")
-                        
-                        # Show all predictions with confidence
-                        st.markdown("**Top 5 Predictions:**")
-                        top_indices = np.argsort(prediction[0])[-5:][::-1]
-                        for idx in top_indices:
-                            label = labels[idx]
-                            conf = prediction[0][idx]
-                            st.progress(float(conf), text=f"{label}: {conf:.2%}")
-                        
-                    else:
-                        st.warning(f"⚠️ Low confidence ({confidence:.2%}). Please try again with a clearer gesture.")
-                        st.info("💡 Tips:\n- Ensure proper lighting\n- Position hand clearly in frame\n- Hold gesture steady\n- Avoid background clutter")
-                
-                # Draw landmarks on image if enabled
-                if show_landmarks:
-                    annotated_image = img_array.copy()
+                if results.multi_hand_landmarks:
+                    # Extract landmarks
+                    landmarks = []
                     for hand_landmarks in results.multi_hand_landmarks:
-                        mp_drawing.draw_landmarks(
-                            annotated_image,
-                            hand_landmarks,
-                            mp_hands.HAND_CONNECTIONS,
-                            mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
-                            mp_drawing.DrawingSpec(color=(255, 0, 0), thickness=2)
-                        )
+                        for landmark in hand_landmarks.landmark:
+                            landmarks.extend([landmark.x, landmark.y, landmark.z])
                     
-                    st.subheader("🖐️ Hand Landmarks Detection")
-                    st.image(annotated_image, caption="Detected Hand Landmarks", use_container_width=True)
-            else:
-                with prediction_container:
-                    st.error("❌ No hand detected in the image!")
-                    st.info("**Tips for better detection:**\n"
-                           "- Position your hand clearly in the frame\n"
-                           "- Ensure good lighting conditions\n"
-                           "- Keep hand within the camera view\n"
-                           "- Remove gloves or hand coverings")
+                    # Ensure we have exactly 63 features (21 landmarks * 3 coordinates)
+                    if len(landmarks) < 63:
+                        landmarks.extend([0] * (63 - len(landmarks)))
+                    elif len(landmarks) > 63:
+                        landmarks = landmarks[:63]
+                    
+                    # Make prediction
+                    prediction = model.predict(np.array([landmarks]), verbose=0)
+                    predicted_class = np.argmax(prediction[0])
+                    confidence = float(prediction[0][predicted_class])
+                    
+                    with prediction_container:
+                        if confidence >= confidence_threshold:
+                            predicted_label = str(labels[predicted_class])
+                            
+                            # Display prediction with styling
+                            st.markdown(
+                                f'<div class="prediction-box">{predicted_label}</div>',
+                                unsafe_allow_html=True
+                            )
+                            
+                            # Display confidence
+                            st.markdown(
+                                f'<div class="confidence-box"><b>Confidence:</b> {confidence:.2%}</div>',
+                                unsafe_allow_html=True
+                            )
+                            
+                            # Add to sequence
+                            if st.button("➕ Add to Text Sequence"):
+                                st.session_state.detected_sequence.append(predicted_label)
+                                st.rerun()
+                            
+                            # Generate audio for single prediction
+                            if enable_audio:
+                                try:
+                                    tts = gTTS(text=predicted_label, lang='en', slow=False)
+                                    audio_buffer = io.BytesIO()
+                                    tts.write_to_fp(audio_buffer)
+                                    audio_buffer.seek(0)
+                                    st.audio(audio_buffer, format='audio/mp3')
+                                except Exception as e:
+                                    st.warning(f"⚠️ Audio generation failed: {e}")
+                            
+                            # Show all predictions with confidence
+                            st.markdown("**Top 5 Predictions:**")
+                            top_indices = np.argsort(prediction[0])[-5:][::-1]
+                            for idx in top_indices:
+                                label = labels[idx]
+                                conf = prediction[0][idx]
+                                st.progress(float(conf), text=f"{label}: {conf:.2%}")
+                            
+                        else:
+                            st.warning(f"⚠️ Low confidence ({confidence:.2%}). Please try again with a clearer gesture.")
+                            st.info("💡 Tips:\n- Ensure proper lighting\n- Position hand clearly in frame\n- Hold gesture steady\n- Avoid background clutter")
+                    
+                    # Draw landmarks on image if enabled
+                    if show_landmarks and mp_drawing is not None:
+                        annotated_image = img_array.copy()
+                        for hand_landmarks in results.multi_hand_landmarks:
+                            mp_drawing.draw_landmarks(
+                                annotated_image,
+                                hand_landmarks,
+                                mp_hands.HAND_CONNECTIONS,
+                                mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
+                                mp_drawing.DrawingSpec(color=(255, 0, 0), thickness=2)
+                            )
+                        
+                        st.subheader("🖐️ Hand Landmarks Detection")
+                        st.image(annotated_image, caption="Detected Hand Landmarks", use_container_width=True)
+                else:
+                    with prediction_container:
+                        st.error("❌ No hand detected in the image!")
+                        st.info("**Tips for better detection:**\n"
+                               "- Position your hand clearly in the frame\n"
+                               "- Ensure good lighting conditions\n"
+                               "- Keep hand within the camera view\n"
+                               "- Remove gloves or hand coverings")
+        else:
+            st.error("❌ MediaPipe hand detection is not available. Please check your mediapipe installation.")
     
     except Exception as e:
         st.error(f"❌ An error occurred during processing")
