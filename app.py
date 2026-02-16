@@ -5,11 +5,11 @@ from tensorflow import keras
 from gtts import gTTS
 from PIL import Image
 import io
-import mediapipe as mp
 
-# Initialize MediaPipe Hands
-mp_hands = mp.solutions.hands
-mp_drawing = mp.solutions.drawing_utils
+# Import MediaPipe properly - CORRECT WAY
+import mediapipe as mp
+from mediapipe.python.solutions import hands as mp_hands_solution
+from mediapipe.python.solutions import drawing_utils as mp_drawing_utils
 
 # Page config
 st.set_page_config(
@@ -70,7 +70,7 @@ st.markdown("""
 
 # Title
 st.markdown('<div class="main-header">🤟 ISL Sign Language Recognition</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">AI-Powered Real-Time Hand Gesture Recognition with Voice Output 🔊</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">AI-Powered Hand Gesture Recognition with Voice Output 🔊</div>', unsafe_allow_html=True)
 
 # Load model and labels
 @st.cache_resource
@@ -103,11 +103,6 @@ if labels is not None:
 
 # Settings
 st.sidebar.header("⚙️ Settings")
-detection_mode = st.sidebar.radio(
-    "Detection Mode",
-    ["📸 Single Image", "🎥 Real-time Video (Coming Soon)"],
-    index=0
-)
 confidence_threshold = st.sidebar.slider("Confidence Threshold", 0.0, 1.0, 0.7, 0.05)
 show_landmarks = st.sidebar.checkbox("Show Hand Landmarks", value=True)
 enable_audio = st.sidebar.checkbox("Enable Voice Output", value=True)
@@ -165,8 +160,8 @@ if camera_input is not None:
         # Convert RGB to BGR for OpenCV
         img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
         
-        # Process with MediaPipe
-        with mp_hands.Hands(
+        # Process with MediaPipe - using the correctly imported solution
+        with mp_hands_solution.Hands(
             static_image_mode=True,
             max_num_hands=1,
             min_detection_confidence=0.5,
@@ -243,12 +238,12 @@ if camera_input is not None:
                 if show_landmarks:
                     annotated_image = img_array.copy()
                     for hand_landmarks in results.multi_hand_landmarks:
-                        mp_drawing.draw_landmarks(
+                        mp_drawing_utils.draw_landmarks(
                             annotated_image,
                             hand_landmarks,
-                            mp_hands.HAND_CONNECTIONS,
-                            mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
-                            mp_drawing.DrawingSpec(color=(255, 0, 0), thickness=2)
+                            mp_hands_solution.HAND_CONNECTIONS,
+                            mp_drawing_utils.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
+                            mp_drawing_utils.DrawingSpec(color=(255, 0, 0), thickness=2)
                         )
                     
                     st.subheader("🖐️ Hand Landmarks Detection")
