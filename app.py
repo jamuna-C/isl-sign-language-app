@@ -6,10 +6,10 @@ from gtts import gTTS
 from PIL import Image
 import io
 
-# Import MediaPipe properly - CORRECT WAY
+# Import MediaPipe - CORRECT way for Streamlit Cloud
 import mediapipe as mp
-from mediapipe.python.solutions import hands as mp_hands_solution
-from mediapipe.python.solutions import drawing_utils as mp_drawing_utils
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
 
 # Page config
 st.set_page_config(
@@ -18,7 +18,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for better UI
+# Custom CSS
 st.markdown("""
 <style>
     .main-header {
@@ -160,8 +160,8 @@ if camera_input is not None:
         # Convert RGB to BGR for OpenCV
         img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
         
-        # Process with MediaPipe - using the correctly imported solution
-        with mp_hands_solution.Hands(
+        # Process with MediaPipe
+        with mp_hands.Hands(
             static_image_mode=True,
             max_num_hands=1,
             min_detection_confidence=0.5,
@@ -238,12 +238,12 @@ if camera_input is not None:
                 if show_landmarks:
                     annotated_image = img_array.copy()
                     for hand_landmarks in results.multi_hand_landmarks:
-                        mp_drawing_utils.draw_landmarks(
+                        mp_drawing.draw_landmarks(
                             annotated_image,
                             hand_landmarks,
-                            mp_hands_solution.HAND_CONNECTIONS,
-                            mp_drawing_utils.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
-                            mp_drawing_utils.DrawingSpec(color=(255, 0, 0), thickness=2)
+                            mp_hands.HAND_CONNECTIONS,
+                            mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
+                            mp_drawing.DrawingSpec(color=(255, 0, 0), thickness=2)
                         )
                     
                     st.subheader("🖐️ Hand Landmarks Detection")
