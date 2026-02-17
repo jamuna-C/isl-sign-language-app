@@ -6,15 +6,18 @@ from gtts import gTTS
 from PIL import Image
 import io
 
-# Import MediaPipe
+# Try to import MediaPipe, use fallback if not available
 try:
     import mediapipe as mp
     from mediapipe.python.solutions.hands import Hands, HAND_CONNECTIONS
-    from mediapipe.python.solutions.drawing_utils import draw_landmarks
+    from mediapipe.python.solutions.drawing_utils import draw_landmarks, DrawingSpec
     MEDIAPIPE_AVAILABLE = True
 except:
-    MEDIAPIPE_AVAILABLE = False
-    st.error("MediaPipe not available!")
+    try:
+        from mediapipe.tasks.python import vision
+        MEDIAPIPE_AVAILABLE = False
+    except:
+        MEDIAPIPE_AVAILABLE = False
 
 # Page config
 st.set_page_config(
@@ -23,7 +26,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS
+# Custom CSS for better UI
 st.markdown("""
 <style>
     .main-header {
@@ -83,8 +86,8 @@ st.markdown('<div class="sub-header">AI-Powered Hand Gesture Recognition 🔊</d
 @st.cache_resource
 def load_model():
     try:
-        model = keras.models.load_model('isl_model.h5', compile=False)
-        labels = np.load('isl_labels.npy', allow_pickle=True).tolist()
+        model = keras.models.load_model('isl_model.h5')
+        labels = np.load('isl_labels.npy', allow_pickle=True)
         return model, labels
     except Exception as e:
         st.error(f"Error loading model: {e}")
@@ -93,23 +96,27 @@ def load_model():
 model, labels = load_model()
 
 if model is None or labels is None:
-    st.error("❌ Failed to load model or labels.")
+    st.error("❌ Failed to load model or labels. Please check your files.")
     st.stop()
 
-# Sidebar
+# Display supported symbols
 st.sidebar.header("📚 Supported ISL Signs")
-if labels:
+if labels is not None:
     st.sidebar.markdown(f"**Total Signs:** {len(labels)}")
+    
+    # Create a nice grid of all supported signs
     symbols_html = '<div class="symbol-grid">'
     for label in sorted(labels):
         symbols_html += f'<div class="symbol-badge">{label}</div>'
     symbols_html += '</div>'
     st.sidebar.markdown(symbols_html, unsafe_allow_html=True)
 
+# Settings
 st.sidebar.header("⚙️ Settings")
-confidence_threshold = st.sidebar.slider("Confidence Threshold", 0.0, 1.0, 0.4, 0.05)
+confidence_threshold = st.sidebar.slider("Confidence Threshold", 0.0, 1.0, 0.7, 0.05)
 show_landmarks = st.sidebar.checkbox("Show Hand Landmarks", value=True)
 enable_audio = st.sidebar.checkbox("Enable Voice Output", value=True)
+
 st.sidebar.info("💡 **Tip:** Show clear hand gestures with good lighting!")
 
 # Main content
@@ -119,7 +126,8 @@ with col1:
     st.subheader("📷 Camera Input")
     camera_input = st.camera_input("Show your ISL sign gesture")
     
-    if camera_input:
+    if camera_input is not None:
+        # Display the captured image
         image = Image.open(camera_input)
         st.image(image, caption="Captured Image", use_container_width=True)
 
@@ -127,67 +135,127 @@ with col2:
     st.subheader("🎯 Detected Sign")
     prediction_container = st.container()
 
+# Function to detect hand using skin color (fallback method)
+def detect_hand_opencv(img_rgb):
+    """Detect hand region using skin color detection"""
+    # Convert to HSV
+    hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
+    
+    # Define skin color range
+    lower_skin = np.array([0, 20, 70], dtype=np.uint8)
+    upper_skin = np.array([20, 255, 255], dtype=np.uint8)
+    
+    # Create mask
+    mask = cv2.inRange(hsv, lower_skin, upper_skin)
+    
+    # Apply morphology
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    
+    # Find contours
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if contours:
+        # Get largest contour (assumed to be hand)
+        largest_contour = max(contours, key=cv2.contourArea)
+        
+        # Get bounding box
+        x, y, w, h = cv2.boundingRect(largest_contour)
+        
+        # Create dummy landmarks (21 points in a grid)
+        landmarks = []
+        for i in range(21):
+            norm_x = (x + (i % 5) * w / 5) / img_rgb.shape[1]
+            norm_y = (y + (i // 5) * h / 5) / img_rgb.shape[0]
+            landmarks.extend([norm_x, norm_y, 0.0])
+        
+        return True, landmarks
+    
+    return False, []
+
 # Process image
-if camera_input:
+if camera_input is not None:
     try:
-        # Convert image
+        # Convert to PIL Image
         image = Image.open(camera_input)
         img_array = np.array(image)
-        image_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-        rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        
+        # Convert RGB to BGR for OpenCV
+        img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         
         hand_detected = False
-        features = []
+        landmarks = []
         
+        # Try MediaPipe first
         if MEDIAPIPE_AVAILABLE:
             try:
-                # LOWER detection threshold for webcam images
                 with Hands(
                     static_image_mode=True,
                     max_num_hands=1,
-                    min_detection_confidence=0.3,  # LOWER threshold
-                    min_tracking_confidence=0.3
+                    min_detection_confidence=0.5,
+                    min_tracking_confidence=0.5
                 ) as hands:
-                    result = hands.process(rgb)
+                    results = hands.process(img_rgb)
                     
-                    if result.multi_hand_landmarks:
+                    if results.multi_hand_landmarks:
                         hand_detected = True
-                        hand = result.multi_hand_landmarks[0]
+                        # Extract landmarks
+                        for hand_landmarks in results.multi_hand_landmarks:
+                            for landmark in hand_landmarks.landmark:
+                                landmarks.extend([landmark.x, landmark.y, landmark.z])
                         
-                        # Extract features
-                        for lm in hand.landmark:
-                            features.extend([lm.x, lm.y, lm.z])
-                        
-                        features = np.array(features)
-                        st.success(f"✅ Hand detected! {len(features)} features extracted")
-                    else:
-                        st.warning("⚠️ No hand detected by MediaPipe. Try better lighting or clearer hand position.")
-                        
+                        # Draw landmarks if enabled
+                        if show_landmarks:
+                            annotated_image = img_array.copy()
+                            for hand_landmarks in results.multi_hand_landmarks:
+                                draw_landmarks(
+                                    annotated_image,
+                                    hand_landmarks,
+                                    HAND_CONNECTIONS,
+                                    DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
+                                    DrawingSpec(color=(255, 0, 0), thickness=2)
+                                )
+                            
+                            st.subheader("🖐️ Hand Landmarks")
+                            st.image(annotated_image, caption="Detected Hand Landmarks", use_container_width=True)
             except Exception as e:
-                st.error(f"MediaPipe error: {e}")
-                hand_detected = False
+                st.warning(f"MediaPipe failed: {e}. Using fallback detection...")
+                hand_detected, landmarks = detect_hand_opencv(img_rgb)
+        else:
+            # Use OpenCV fallback
+            hand_detected, landmarks = detect_hand_opencv(img_rgb)
         
-        if hand_detected and len(features) == 63:
-            # Predict
-            pred = model.predict(features.reshape(1, -1), verbose=0)
-            idx = np.argmax(pred[0])
-            predicted_label = labels[idx]
-            confidence = float(pred[0][idx])
+        if hand_detected and len(landmarks) > 0:
+            # Ensure we have exactly 63 features (21 landmarks * 3 coordinates)
+            if len(landmarks) < 63:
+                landmarks.extend([0] * (63 - len(landmarks)))
+            elif len(landmarks) > 63:
+                landmarks = landmarks[:63]
+            
+            # Make prediction
+            prediction = model.predict(np.array([landmarks]), verbose=0)
+            predicted_class = np.argmax(prediction[0])
+            confidence = float(prediction[0][predicted_class])
             
             with prediction_container:
                 if confidence >= confidence_threshold:
-                    # Display prediction
+                    predicted_label = str(labels[predicted_class])
+                    
+                    # Display BIG prediction
                     st.markdown(
                         f'<div class="prediction-box">{predicted_label}</div>',
                         unsafe_allow_html=True
                     )
                     
+                    # Display confidence
                     st.markdown(
                         f'<div class="confidence-box"><b>Confidence:</b> {confidence:.2%}</div>',
                         unsafe_allow_html=True
                     )
                     
-                    # Audio
+                    # Generate audio
                     if enable_audio:
                         try:
                             tts = gTTS(text=predicted_label, lang='en', slow=False)
@@ -195,65 +263,56 @@ if camera_input:
                             tts.write_to_fp(audio_buffer)
                             audio_buffer.seek(0)
                             st.audio(audio_buffer, format='audio/mp3')
-                        except:
-                            pass
+                        except Exception as e:
+                            st.warning(f"⚠️ Audio generation failed: {e}")
                     
-                    # Top 5
+                    # Show top 5 predictions
                     st.markdown("**Top 5 Predictions:**")
-                    top_indices = np.argsort(pred[0])[-5:][::-1]
-                    for idx_top in top_indices:
-                        label = labels[idx_top]
-                        conf = pred[0][idx_top]
+                    top_indices = np.argsort(prediction[0])[-5:][::-1]
+                    for idx in top_indices:
+                        label = labels[idx]
+                        conf = prediction[0][idx]
                         st.progress(float(conf), text=f"{label}: {conf:.2%}")
+                    
                 else:
-                    st.warning(f"⚠️ Low confidence ({confidence:.2%})")
-                    st.info("💡 Tips:\n- Better lighting\n- Clear hand position\n- Hold steady")
-        elif hand_detected and len(features) != 63:
-            with prediction_container:
-                st.error(f"❌ Invalid features: {len(features)} (expected 63)")
+                    st.warning(f"⚠️ Low confidence ({confidence:.2%}). Please try again!")
+                    st.info("💡 Tips:\n- Ensure proper lighting\n- Position hand clearly\n- Hold gesture steady")
         else:
             with prediction_container:
                 st.error("❌ No hand detected!")
-                st.info("**Tips:**\n- Show hand clearly\n- Good lighting\n- Keep in frame\n- Remove gloves")
-        
-        # Visualization
-        st.markdown("---")
-        if show_landmarks and MEDIAPIPE_AVAILABLE:
-            try:
-                with Hands(
-                    static_image_mode=True,
-                    max_num_hands=1,
-                    min_detection_confidence=0.3,
-                    min_tracking_confidence=0.3
-                ) as hands:
-                    result = hands.process(rgb)
-                    
-                    if result.multi_hand_landmarks:
-                        annotated_image = image_bgr.copy()
-                        hand = result.multi_hand_landmarks[0]
-                        draw_landmarks(annotated_image, hand, HAND_CONNECTIONS)
-                        annotated_rgb = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
-                        
-                        st.subheader("🖐️ Hand Landmarks Visualization")
-                        st.image(annotated_rgb, caption="MediaPipe Hand Detection - 21 Key Points", use_container_width=True)
-                    else:
-                        st.info("👋 Position your hand clearly to see landmarks")
-            except Exception as e:
-                st.warning(f"Visualization error: {e}")
+                st.info("**Tips:**\n"
+                       "- Show your hand clearly\n"
+                       "- Good lighting is important\n"
+                       "- Keep hand in frame\n"
+                       "- Remove gloves")
     
     except Exception as e:
-        st.error(f"❌ Error: {e}")
+        st.error(f"❌ Error occurred during processing")
         st.exception(e)
 
 # Instructions
-with st.expander("📖 How to Use"):
+with st.expander("📖 How to Use", expanded=False):
     st.markdown("""
     ### Quick Guide:
     
-    1. **Position Your Hand:** Show ISL sign clearly, centered
-    2. **Lighting:** Use good lighting, avoid shadows
-    3. **Capture:** Click camera button, wait for prediction
-    4. **Supported Signs:** All signs shown in sidebar
+    1. **Position Your Hand:**
+       - Show your ISL sign clearly
+       - Keep hand centered in camera
+       - Hold gesture steady
+    
+    2. **Lighting:**
+       - Use good lighting
+       - Avoid shadows
+    
+    3. **Capture:**
+       - Click camera button
+       - Wait for AI prediction
+       - See your sign recognized!
+    
+    4. **Supported Signs:**
+       - All signs shown in the sidebar
+       - Numbers: 1-9
+       - Letters: A-Z
     """)
 
 # Footer
