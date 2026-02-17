@@ -6,14 +6,15 @@ from gtts import gTTS
 from PIL import Image
 import io
 
-# Import MediaPipe - SAME as your working localhost code
+# Import MediaPipe
 try:
     import mediapipe as mp
     from mediapipe.python.solutions.hands import Hands, HAND_CONNECTIONS
-    from mediapipe.python.solutions.drawing_utils import draw_landmarks, DrawingSpec
+    from mediapipe.python.solutions.drawing_utils import draw_landmarks
     MEDIAPIPE_AVAILABLE = True
 except:
     MEDIAPIPE_AVAILABLE = False
+    st.error("MediaPipe not available!")
 
 # Page config
 st.set_page_config(
@@ -22,7 +23,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for better UI
+# Custom CSS
 st.markdown("""
 <style>
     .main-header {
@@ -78,7 +79,7 @@ st.markdown("""
 st.markdown('<div class="main-header">🤟 ISL Sign Language Recognition</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">AI-Powered Hand Gesture Recognition 🔊</div>', unsafe_allow_html=True)
 
-# Load model and labels - SAME as your localhost code
+# Load model and labels
 @st.cache_resource
 def load_model():
     try:
@@ -92,27 +93,23 @@ def load_model():
 model, labels = load_model()
 
 if model is None or labels is None:
-    st.error("❌ Failed to load model or labels. Please check your files.")
+    st.error("❌ Failed to load model or labels.")
     st.stop()
 
-# Display supported symbols
+# Sidebar
 st.sidebar.header("📚 Supported ISL Signs")
-if labels is not None:
+if labels:
     st.sidebar.markdown(f"**Total Signs:** {len(labels)}")
-    
-    # Create a nice grid of all supported signs
     symbols_html = '<div class="symbol-grid">'
     for label in sorted(labels):
         symbols_html += f'<div class="symbol-badge">{label}</div>'
     symbols_html += '</div>'
     st.sidebar.markdown(symbols_html, unsafe_allow_html=True)
 
-# Settings
 st.sidebar.header("⚙️ Settings")
-confidence_threshold = st.sidebar.slider("Confidence Threshold", 0.0, 1.0, 0.5, 0.05)
+confidence_threshold = st.sidebar.slider("Confidence Threshold", 0.0, 1.0, 0.4, 0.05)
 show_landmarks = st.sidebar.checkbox("Show Hand Landmarks", value=True)
 enable_audio = st.sidebar.checkbox("Enable Voice Output", value=True)
-
 st.sidebar.info("💡 **Tip:** Show clear hand gestures with good lighting!")
 
 # Main content
@@ -122,8 +119,7 @@ with col1:
     st.subheader("📷 Camera Input")
     camera_input = st.camera_input("Show your ISL sign gesture")
     
-    if camera_input is not None:
-        # Display the captured image
+    if camera_input:
         image = Image.open(camera_input)
         st.image(image, caption="Captured Image", use_container_width=True)
 
@@ -131,30 +127,26 @@ with col2:
     st.subheader("🎯 Detected Sign")
     prediction_container = st.container()
 
-# Process image - USING YOUR EXACT WORKING LOCALHOST CODE
-if camera_input is not None:
+# Process image
+if camera_input:
     try:
-        # Convert to PIL Image then to OpenCV format
+        # Convert image
         image = Image.open(camera_input)
         img_array = np.array(image)
-        
-        # Convert RGB to BGR for OpenCV - SAME as localhost
         image_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-        
-        # Convert BGR to RGB for MediaPipe - SAME as localhost
         rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
         
         hand_detected = False
         features = []
         
-        # MediaPipe setup - EXACT SAME as your localhost code
         if MEDIAPIPE_AVAILABLE:
             try:
-                # SAME settings as your localhost: min_detection_confidence=0.7
+                # LOWER detection threshold for webcam images
                 with Hands(
                     static_image_mode=True,
                     max_num_hands=1,
-                    min_detection_confidence=0.7
+                    min_detection_confidence=0.3,  # LOWER threshold
+                    min_tracking_confidence=0.3
                 ) as hands:
                     result = hands.process(rgb)
                     
@@ -162,17 +154,21 @@ if camera_input is not None:
                         hand_detected = True
                         hand = result.multi_hand_landmarks[0]
                         
-                        # Extract features - EXACT SAME as localhost
+                        # Extract features
                         for lm in hand.landmark:
                             features.extend([lm.x, lm.y, lm.z])
                         
                         features = np.array(features)
+                        st.success(f"✅ Hand detected! {len(features)} features extracted")
+                    else:
+                        st.warning("⚠️ No hand detected by MediaPipe. Try better lighting or clearer hand position.")
+                        
             except Exception as e:
                 st.error(f"MediaPipe error: {e}")
                 hand_detected = False
         
         if hand_detected and len(features) == 63:
-            # Predict - EXACT SAME as localhost
+            # Predict
             pred = model.predict(features.reshape(1, -1), verbose=0)
             idx = np.argmax(pred[0])
             predicted_label = labels[idx]
@@ -180,19 +176,18 @@ if camera_input is not None:
             
             with prediction_container:
                 if confidence >= confidence_threshold:
-                    # Display BIG prediction
+                    # Display prediction
                     st.markdown(
                         f'<div class="prediction-box">{predicted_label}</div>',
                         unsafe_allow_html=True
                     )
                     
-                    # Display confidence
                     st.markdown(
                         f'<div class="confidence-box"><b>Confidence:</b> {confidence:.2%}</div>',
                         unsafe_allow_html=True
                     )
                     
-                    # Generate audio
+                    # Audio
                     if enable_audio:
                         try:
                             tts = gTTS(text=predicted_label, lang='en', slow=False)
@@ -200,90 +195,65 @@ if camera_input is not None:
                             tts.write_to_fp(audio_buffer)
                             audio_buffer.seek(0)
                             st.audio(audio_buffer, format='audio/mp3')
-                        except Exception as e:
-                            st.warning(f"⚠️ Audio generation failed: {e}")
+                        except:
+                            pass
                     
-                    # Show top 5 predictions
+                    # Top 5
                     st.markdown("**Top 5 Predictions:**")
                     top_indices = np.argsort(pred[0])[-5:][::-1]
                     for idx_top in top_indices:
                         label = labels[idx_top]
                         conf = pred[0][idx_top]
                         st.progress(float(conf), text=f"{label}: {conf:.2%}")
-                    
                 else:
-                    st.warning(f"⚠️ Low confidence ({confidence:.2%}). Please try again!")
-                    st.info("💡 Tips:\n- Ensure proper lighting\n- Position hand clearly\n- Hold gesture steady")
+                    st.warning(f"⚠️ Low confidence ({confidence:.2%})")
+                    st.info("💡 Tips:\n- Better lighting\n- Clear hand position\n- Hold steady")
+        elif hand_detected and len(features) != 63:
+            with prediction_container:
+                st.error(f"❌ Invalid features: {len(features)} (expected 63)")
         else:
             with prediction_container:
                 st.error("❌ No hand detected!")
-                st.info("**Tips:**\n"
-                       "- Show your hand clearly\n"
-                       "- Good lighting is important\n"
-                       "- Keep hand in frame\n"
-                       "- Remove gloves")
+                st.info("**Tips:**\n- Show hand clearly\n- Good lighting\n- Keep in frame\n- Remove gloves")
         
-        # ALWAYS show hand landmarks visualization below
+        # Visualization
         st.markdown("---")
         if show_landmarks and MEDIAPIPE_AVAILABLE:
             try:
-                # Same MediaPipe settings for visualization
                 with Hands(
                     static_image_mode=True,
                     max_num_hands=1,
-                    min_detection_confidence=0.7
+                    min_detection_confidence=0.3,
+                    min_tracking_confidence=0.3
                 ) as hands:
                     result = hands.process(rgb)
                     
                     if result.multi_hand_landmarks:
-                        # Draw on BGR image for display
                         annotated_image = image_bgr.copy()
                         hand = result.multi_hand_landmarks[0]
-                        
-                        # Draw landmarks - SAME as localhost
-                        draw_landmarks(
-                            annotated_image,
-                            hand,
-                            HAND_CONNECTIONS
-                        )
-                        
-                        # Convert back to RGB for Streamlit display
+                        draw_landmarks(annotated_image, hand, HAND_CONNECTIONS)
                         annotated_rgb = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
                         
                         st.subheader("🖐️ Hand Landmarks Visualization")
                         st.image(annotated_rgb, caption="MediaPipe Hand Detection - 21 Key Points", use_container_width=True)
                     else:
-                        st.info("👋 Position your hand clearly in the frame to see landmarks visualization")
+                        st.info("👋 Position your hand clearly to see landmarks")
             except Exception as e:
-                st.warning(f"Could not generate landmarks visualization: {e}")
+                st.warning(f"Visualization error: {e}")
     
     except Exception as e:
-        st.error(f"❌ Error occurred during processing")
+        st.error(f"❌ Error: {e}")
         st.exception(e)
 
 # Instructions
-with st.expander("📖 How to Use", expanded=False):
+with st.expander("📖 How to Use"):
     st.markdown("""
     ### Quick Guide:
     
-    1. **Position Your Hand:**
-       - Show your ISL sign clearly
-       - Keep hand centered in camera
-       - Hold gesture steady
-    
-    2. **Lighting:**
-       - Use good lighting
-       - Avoid shadows
-    
-    3. **Capture:**
-       - Click camera button
-       - Wait for AI prediction
-       - See your sign recognized!
-    
-    4. **Supported Signs:**
-       - All signs shown in the sidebar
-       - Numbers: 1-9
-       - Letters: A-Z
+    1. **Position Your Hand:** Show ISL sign clearly, centered
+    2. **Lighting:** Use good lighting, avoid shadows
+    3. **Capture:** Click camera button, wait for prediction
+    4. **Supported Signs:** All signs shown in sidebar
     """)
 
 # Footer
