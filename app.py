@@ -113,7 +113,7 @@ if labels is not None:
 
 # Settings
 st.sidebar.header("⚙️ Settings")
-confidence_threshold = st.sidebar.slider("Confidence Threshold", 0.0, 1.0, 0.7, 0.05)
+confidence_threshold = st.sidebar.slider("Confidence Threshold", 0.0, 1.0, 0.5, 0.05)
 show_landmarks = st.sidebar.checkbox("Show Hand Landmarks", value=True)
 enable_audio = st.sidebar.checkbox("Enable Voice Output", value=True)
 
@@ -135,57 +135,6 @@ with col2:
     st.subheader("🎯 Detected Sign")
     prediction_container = st.container()
 
-# Function to detect hand using skin color (fallback method)
-def detect_hand_opencv(img_rgb):
-    """Detect hand region using skin color detection"""
-    # Convert to HSV
-    hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
-    
-    # Define skin color range
-    lower_skin = np.array([0, 20, 70], dtype=np.uint8)
-    upper_skin = np.array([20, 255, 255], dtype=np.uint8)
-    
-    # Create mask
-    mask = cv2.inRange(hsv, lower_skin, upper_skin)
-    
-    # Apply morphology
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    
-    # Find contours
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    if contours:
-        # Get largest contour (assumed to be hand)
-        largest_contour = max(contours, key=cv2.contourArea)
-        
-        # Get bounding box
-        x, y, w, h = cv2.boundingRect(largest_contour)
-        
-        # Create dummy landmarks (21 points in a grid)
-        landmarks = []
-        for i in range(21):
-            norm_x = (x + (i % 5) * w / 5) / img_rgb.shape[1]
-            norm_y = (y + (i // 5) * h / 5) / img_rgb.shape[0]
-            landmarks.extend([norm_x, norm_y, 0.0])
-        
-        # Normalize relative to first point
-        if len(landmarks) >= 3:
-            wrist_x, wrist_y, wrist_z = landmarks[0], landmarks[1], landmarks[2]
-            normalized = []
-            for i in range(0, len(landmarks), 3):
-                normalized.extend([
-                    landmarks[i] - wrist_x,
-                    landmarks[i+1] - wrist_y,
-                    landmarks[i+2] - wrist_z
-                ])
-            return True, normalized
-        
-        return True, landmarks
-    
-    return False, []
-
 # Process image
 if camera_input is not None:
     try:
@@ -206,31 +155,18 @@ if camera_input is not None:
                 with Hands(
                     static_image_mode=True,
                     max_num_hands=1,
-                    min_detection_confidence=0.5,
-                    min_tracking_confidence=0.5
+                    min_detection_confidence=0.3,
+                    min_tracking_confidence=0.3
                 ) as hands:
                     results = hands.process(img_rgb)
                     
                     if results.multi_hand_landmarks:
                         hand_detected = True
-                        # Extract landmarks - matching training format
                         hand_landmarks = results.multi_hand_landmarks[0]
                         
-                        # Get all landmark coordinates
+                        # Extract landmarks EXACTLY as they come - RAW format (most common for ISL models)
                         for landmark in hand_landmarks.landmark:
                             landmarks.extend([landmark.x, landmark.y, landmark.z])
-                        
-                        # Normalize landmarks relative to wrist (landmark 0) - THIS IS CRITICAL!
-                        if len(landmarks) >= 3:
-                            wrist_x, wrist_y, wrist_z = landmarks[0], landmarks[1], landmarks[2]
-                            normalized = []
-                            for i in range(0, len(landmarks), 3):
-                                normalized.extend([
-                                    landmarks[i] - wrist_x,
-                                    landmarks[i+1] - wrist_y,
-                                    landmarks[i+2] - wrist_z
-                                ])
-                            landmarks = normalized
                         
                         # Draw landmarks if enabled
                         if show_landmarks:
@@ -246,11 +182,8 @@ if camera_input is not None:
                             st.subheader("🖐️ Hand Landmarks")
                             st.image(annotated_image, caption="Detected Hand Landmarks", use_container_width=True)
             except Exception as e:
-                st.warning(f"MediaPipe failed: {e}. Using fallback detection...")
-                hand_detected, landmarks = detect_hand_opencv(img_rgb)
-        else:
-            # Use OpenCV fallback
-            hand_detected, landmarks = detect_hand_opencv(img_rgb)
+                st.error(f"MediaPipe error: {e}")
+                hand_detected = False
         
         if hand_detected and len(landmarks) > 0:
             # Ensure we have exactly 63 features (21 landmarks * 3 coordinates)
@@ -259,8 +192,11 @@ if camera_input is not None:
             elif len(landmarks) > 63:
                 landmarks = landmarks[:63]
             
+            # Convert to numpy array with correct shape
+            landmarks_array = np.array([landmarks], dtype=np.float32)
+            
             # Make prediction
-            prediction = model.predict(np.array([landmarks]), verbose=0)
+            prediction = model.predict(landmarks_array, verbose=0)
             predicted_class = np.argmax(prediction[0])
             confidence = float(prediction[0][predicted_class])
             
