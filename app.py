@@ -6,18 +6,14 @@ from gtts import gTTS
 from PIL import Image
 import io
 
-# Try to import MediaPipe, use fallback if not available
+# Import MediaPipe - SAME as your working localhost code
 try:
     import mediapipe as mp
     from mediapipe.python.solutions.hands import Hands, HAND_CONNECTIONS
     from mediapipe.python.solutions.drawing_utils import draw_landmarks, DrawingSpec
     MEDIAPIPE_AVAILABLE = True
 except:
-    try:
-        from mediapipe.tasks.python import vision
-        MEDIAPIPE_AVAILABLE = False
-    except:
-        MEDIAPIPE_AVAILABLE = False
+    MEDIAPIPE_AVAILABLE = False
 
 # Page config
 st.set_page_config(
@@ -82,12 +78,12 @@ st.markdown("""
 st.markdown('<div class="main-header">🤟 ISL Sign Language Recognition</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">AI-Powered Hand Gesture Recognition 🔊</div>', unsafe_allow_html=True)
 
-# Load model and labels
+# Load model and labels - SAME as your localhost code
 @st.cache_resource
 def load_model():
     try:
-        model = keras.models.load_model('isl_model.h5')
-        labels = np.load('isl_labels.npy', allow_pickle=True)
+        model = keras.models.load_model('isl_model.h5', compile=False)
+        labels = np.load('isl_labels.npy', allow_pickle=True).tolist()
         return model, labels
     except Exception as e:
         st.error(f"Error loading model: {e}")
@@ -135,61 +131,55 @@ with col2:
     st.subheader("🎯 Detected Sign")
     prediction_container = st.container()
 
-# Process image
+# Process image - USING YOUR EXACT WORKING LOCALHOST CODE
 if camera_input is not None:
     try:
-        # Convert to PIL Image
+        # Convert to PIL Image then to OpenCV format
         image = Image.open(camera_input)
         img_array = np.array(image)
         
-        # Convert RGB to BGR for OpenCV
-        img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        # Convert RGB to BGR for OpenCV - SAME as localhost
+        image_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+        
+        # Convert BGR to RGB for MediaPipe - SAME as localhost
+        rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
         
         hand_detected = False
-        landmarks = []
+        features = []
         
-        # Try MediaPipe first with LOWER detection threshold for better detection
+        # MediaPipe setup - EXACT SAME as your localhost code
         if MEDIAPIPE_AVAILABLE:
             try:
+                # SAME settings as your localhost: min_detection_confidence=0.7
                 with Hands(
                     static_image_mode=True,
                     max_num_hands=1,
-                    min_detection_confidence=0.2,  # Lower threshold for better detection
-                    min_tracking_confidence=0.2
+                    min_detection_confidence=0.7
                 ) as hands:
-                    results = hands.process(img_rgb)
+                    result = hands.process(rgb)
                     
-                    if results.multi_hand_landmarks:
+                    if result.multi_hand_landmarks:
                         hand_detected = True
-                        hand_landmarks = results.multi_hand_landmarks[0]
+                        hand = result.multi_hand_landmarks[0]
                         
-                        # Extract landmarks EXACTLY as they come - RAW format
-                        for landmark in hand_landmarks.landmark:
-                            landmarks.extend([landmark.x, landmark.y, landmark.z])
+                        # Extract features - EXACT SAME as localhost
+                        for lm in hand.landmark:
+                            features.extend([lm.x, lm.y, lm.z])
+                        
+                        features = np.array(features)
             except Exception as e:
                 st.error(f"MediaPipe error: {e}")
                 hand_detected = False
         
-        if hand_detected and len(landmarks) > 0:
-            # Ensure we have exactly 63 features (21 landmarks * 3 coordinates)
-            if len(landmarks) < 63:
-                landmarks.extend([0] * (63 - len(landmarks)))
-            elif len(landmarks) > 63:
-                landmarks = landmarks[:63]
-            
-            # Convert to numpy array with correct shape
-            landmarks_array = np.array([landmarks], dtype=np.float32)
-            
-            # Make prediction
-            prediction = model.predict(landmarks_array, verbose=0)
-            predicted_class = np.argmax(prediction[0])
-            confidence = float(prediction[0][predicted_class])
+        if hand_detected and len(features) == 63:
+            # Predict - EXACT SAME as localhost
+            pred = model.predict(features.reshape(1, -1), verbose=0)
+            idx = np.argmax(pred[0])
+            predicted_label = labels[idx]
+            confidence = float(pred[0][idx])
             
             with prediction_container:
                 if confidence >= confidence_threshold:
-                    predicted_label = str(labels[predicted_class])
-                    
                     # Display BIG prediction
                     st.markdown(
                         f'<div class="prediction-box">{predicted_label}</div>',
@@ -215,10 +205,10 @@ if camera_input is not None:
                     
                     # Show top 5 predictions
                     st.markdown("**Top 5 Predictions:**")
-                    top_indices = np.argsort(prediction[0])[-5:][::-1]
-                    for idx in top_indices:
-                        label = labels[idx]
-                        conf = prediction[0][idx]
+                    top_indices = np.argsort(pred[0])[-5:][::-1]
+                    for idx_top in top_indices:
+                        label = labels[idx_top]
+                        conf = pred[0][idx_top]
                         st.progress(float(conf), text=f"{label}: {conf:.2%}")
                     
                 else:
@@ -233,31 +223,35 @@ if camera_input is not None:
                        "- Keep hand in frame\n"
                        "- Remove gloves")
         
-        # ALWAYS show hand landmarks visualization below (separate from detection)
+        # ALWAYS show hand landmarks visualization below
         st.markdown("---")
         if show_landmarks and MEDIAPIPE_AVAILABLE:
             try:
+                # Same MediaPipe settings for visualization
                 with Hands(
                     static_image_mode=True,
                     max_num_hands=1,
-                    min_detection_confidence=0.2,
-                    min_tracking_confidence=0.2
+                    min_detection_confidence=0.7
                 ) as hands:
-                    results = hands.process(img_rgb)
+                    result = hands.process(rgb)
                     
-                    if results.multi_hand_landmarks:
-                        annotated_image = img_array.copy()
-                        for hand_landmarks in results.multi_hand_landmarks:
-                            draw_landmarks(
-                                annotated_image,
-                                hand_landmarks,
-                                HAND_CONNECTIONS,
-                                DrawingSpec(color=(0, 255, 0), thickness=3, circle_radius=4),
-                                DrawingSpec(color=(255, 0, 0), thickness=2, circle_radius=2)
-                            )
+                    if result.multi_hand_landmarks:
+                        # Draw on BGR image for display
+                        annotated_image = image_bgr.copy()
+                        hand = result.multi_hand_landmarks[0]
+                        
+                        # Draw landmarks - SAME as localhost
+                        draw_landmarks(
+                            annotated_image,
+                            hand,
+                            HAND_CONNECTIONS
+                        )
+                        
+                        # Convert back to RGB for Streamlit display
+                        annotated_rgb = cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB)
                         
                         st.subheader("🖐️ Hand Landmarks Visualization")
-                        st.image(annotated_image, caption="MediaPipe Hand Detection - 21 Key Points", use_container_width=True)
+                        st.image(annotated_rgb, caption="MediaPipe Hand Detection - 21 Key Points", use_container_width=True)
                     else:
                         st.info("👋 Position your hand clearly in the frame to see landmarks visualization")
             except Exception as e:
