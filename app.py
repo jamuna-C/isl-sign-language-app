@@ -170,6 +170,18 @@ def detect_hand_opencv(img_rgb):
             norm_y = (y + (i // 5) * h / 5) / img_rgb.shape[0]
             landmarks.extend([norm_x, norm_y, 0.0])
         
+        # Normalize relative to first point
+        if len(landmarks) >= 3:
+            wrist_x, wrist_y, wrist_z = landmarks[0], landmarks[1], landmarks[2]
+            normalized = []
+            for i in range(0, len(landmarks), 3):
+                normalized.extend([
+                    landmarks[i] - wrist_x,
+                    landmarks[i+1] - wrist_y,
+                    landmarks[i+2] - wrist_z
+                ])
+            return True, normalized
+        
         return True, landmarks
     
     return False, []
@@ -201,22 +213,35 @@ if camera_input is not None:
                     
                     if results.multi_hand_landmarks:
                         hand_detected = True
-                        # Extract landmarks
-                        for hand_landmarks in results.multi_hand_landmarks:
-                            for landmark in hand_landmarks.landmark:
-                                landmarks.extend([landmark.x, landmark.y, landmark.z])
+                        # Extract landmarks - matching training format
+                        hand_landmarks = results.multi_hand_landmarks[0]
+                        
+                        # Get all landmark coordinates
+                        for landmark in hand_landmarks.landmark:
+                            landmarks.extend([landmark.x, landmark.y, landmark.z])
+                        
+                        # Normalize landmarks relative to wrist (landmark 0) - THIS IS CRITICAL!
+                        if len(landmarks) >= 3:
+                            wrist_x, wrist_y, wrist_z = landmarks[0], landmarks[1], landmarks[2]
+                            normalized = []
+                            for i in range(0, len(landmarks), 3):
+                                normalized.extend([
+                                    landmarks[i] - wrist_x,
+                                    landmarks[i+1] - wrist_y,
+                                    landmarks[i+2] - wrist_z
+                                ])
+                            landmarks = normalized
                         
                         # Draw landmarks if enabled
                         if show_landmarks:
                             annotated_image = img_array.copy()
-                            for hand_landmarks in results.multi_hand_landmarks:
-                                draw_landmarks(
-                                    annotated_image,
-                                    hand_landmarks,
-                                    HAND_CONNECTIONS,
-                                    DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
-                                    DrawingSpec(color=(255, 0, 0), thickness=2)
-                                )
+                            draw_landmarks(
+                                annotated_image,
+                                hand_landmarks,
+                                HAND_CONNECTIONS,
+                                DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
+                                DrawingSpec(color=(255, 0, 0), thickness=2)
+                            )
                             
                             st.subheader("🖐️ Hand Landmarks")
                             st.image(annotated_image, caption="Detected Hand Landmarks", use_container_width=True)
