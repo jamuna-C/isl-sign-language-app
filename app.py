@@ -149,14 +149,14 @@ if camera_input is not None:
         hand_detected = False
         landmarks = []
         
-        # Try MediaPipe first
+        # Try MediaPipe first with LOWER detection threshold for better detection
         if MEDIAPIPE_AVAILABLE:
             try:
                 with Hands(
                     static_image_mode=True,
                     max_num_hands=1,
-                    min_detection_confidence=0.3,
-                    min_tracking_confidence=0.3
+                    min_detection_confidence=0.2,  # Lower threshold for better detection
+                    min_tracking_confidence=0.2
                 ) as hands:
                     results = hands.process(img_rgb)
                     
@@ -164,41 +164,12 @@ if camera_input is not None:
                         hand_detected = True
                         hand_landmarks = results.multi_hand_landmarks[0]
                         
-                        # Extract landmarks EXACTLY as they come - RAW format (most common for ISL models)
+                        # Extract landmarks EXACTLY as they come - RAW format
                         for landmark in hand_landmarks.landmark:
                             landmarks.extend([landmark.x, landmark.y, landmark.z])
             except Exception as e:
                 st.error(f"MediaPipe error: {e}")
                 hand_detected = False
-        
-        # Draw landmarks visualization (always show if enabled)
-        if MEDIAPIPE_AVAILABLE and show_landmarks:
-            try:
-                with Hands(
-                    static_image_mode=True,
-                    max_num_hands=1,
-                    min_detection_confidence=0.3,
-                    min_tracking_confidence=0.3
-                ) as hands:
-                    results = hands.process(img_rgb)
-                    
-                    if results.multi_hand_landmarks:
-                        annotated_image = img_array.copy()
-                        for hand_landmarks in results.multi_hand_landmarks:
-                            draw_landmarks(
-                                annotated_image,
-                                hand_landmarks,
-                                HAND_CONNECTIONS,
-                                DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=3),
-                                DrawingSpec(color=(255, 0, 0), thickness=2, circle_radius=1)
-                            )
-                        
-                        st.subheader("🖐️ Hand Landmarks Visualization")
-                        st.image(annotated_image, caption="MediaPipe Hand Detection", use_container_width=True)
-                    else:
-                        st.info("👋 Position your hand in the frame to see landmarks")
-            except:
-                pass
         
         if hand_detected and len(landmarks) > 0:
             # Ensure we have exactly 63 features (21 landmarks * 3 coordinates)
@@ -261,6 +232,36 @@ if camera_input is not None:
                        "- Good lighting is important\n"
                        "- Keep hand in frame\n"
                        "- Remove gloves")
+        
+        # ALWAYS show hand landmarks visualization below (separate from detection)
+        st.markdown("---")
+        if show_landmarks and MEDIAPIPE_AVAILABLE:
+            try:
+                with Hands(
+                    static_image_mode=True,
+                    max_num_hands=1,
+                    min_detection_confidence=0.2,
+                    min_tracking_confidence=0.2
+                ) as hands:
+                    results = hands.process(img_rgb)
+                    
+                    if results.multi_hand_landmarks:
+                        annotated_image = img_array.copy()
+                        for hand_landmarks in results.multi_hand_landmarks:
+                            draw_landmarks(
+                                annotated_image,
+                                hand_landmarks,
+                                HAND_CONNECTIONS,
+                                DrawingSpec(color=(0, 255, 0), thickness=3, circle_radius=4),
+                                DrawingSpec(color=(255, 0, 0), thickness=2, circle_radius=2)
+                            )
+                        
+                        st.subheader("🖐️ Hand Landmarks Visualization")
+                        st.image(annotated_image, caption="MediaPipe Hand Detection - 21 Key Points", use_container_width=True)
+                    else:
+                        st.info("👋 Position your hand clearly in the frame to see landmarks visualization")
+            except Exception as e:
+                st.warning(f"Could not generate landmarks visualization: {e}")
     
     except Exception as e:
         st.error(f"❌ Error occurred during processing")
