@@ -167,23 +167,38 @@ if camera_input is not None:
                         # Extract landmarks EXACTLY as they come - RAW format (most common for ISL models)
                         for landmark in hand_landmarks.landmark:
                             landmarks.extend([landmark.x, landmark.y, landmark.z])
-                        
-                        # Draw landmarks if enabled
-                        if show_landmarks:
-                            annotated_image = img_array.copy()
+            except Exception as e:
+                st.error(f"MediaPipe error: {e}")
+                hand_detected = False
+        
+        # Draw landmarks visualization (always show if enabled)
+        if MEDIAPIPE_AVAILABLE and show_landmarks:
+            try:
+                with Hands(
+                    static_image_mode=True,
+                    max_num_hands=1,
+                    min_detection_confidence=0.3,
+                    min_tracking_confidence=0.3
+                ) as hands:
+                    results = hands.process(img_rgb)
+                    
+                    if results.multi_hand_landmarks:
+                        annotated_image = img_array.copy()
+                        for hand_landmarks in results.multi_hand_landmarks:
                             draw_landmarks(
                                 annotated_image,
                                 hand_landmarks,
                                 HAND_CONNECTIONS,
-                                DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
-                                DrawingSpec(color=(255, 0, 0), thickness=2)
+                                DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=3),
+                                DrawingSpec(color=(255, 0, 0), thickness=2, circle_radius=1)
                             )
-                            
-                            st.subheader("🖐️ Hand Landmarks")
-                            st.image(annotated_image, caption="Detected Hand Landmarks", use_container_width=True)
-            except Exception as e:
-                st.error(f"MediaPipe error: {e}")
-                hand_detected = False
+                        
+                        st.subheader("🖐️ Hand Landmarks Visualization")
+                        st.image(annotated_image, caption="MediaPipe Hand Detection", use_container_width=True)
+                    else:
+                        st.info("👋 Position your hand in the frame to see landmarks")
+            except:
+                pass
         
         if hand_detected and len(landmarks) > 0:
             # Ensure we have exactly 63 features (21 landmarks * 3 coordinates)
